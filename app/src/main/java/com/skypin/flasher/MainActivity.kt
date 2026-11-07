@@ -1,6 +1,7 @@
 package com.skypin.flasher
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -12,187 +13,556 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
+import android.view.Gravity
+import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import java.nio.charset.StandardCharsets
-import kotlin.concurrent.thread
+import java.io.IOException
+import java.io.InputStream
+import java.util.concurrent.Executors
 
-private const val ACTION_USB_PERMISSION = "com.skypin.flasher.USB_PERMISSION"
+private const val READ_TIMEOUT = 10000
+private const val DATA_TIMEOUT = 60000
+private const val FLASH_TIMEOUT = 300000
+private const val CHUNK = 16384
+
+class FastbootException(msg: String) : RuntimeException(msg)
+
+class Fastboot(private val conn: UsbDeviceConnection, private val iface: UsbInterface) {
+
+    private class Resp(val code: String, val text: String)
+
+    private val epIn: UsbEndpoint
+    private val epOut: UsbEndpoint
+
+    init {
+        var inEp: UsbEndpoint? = null
+        var outEp: UsbEndpoint? = null
+        for (k in 0 until iface.endpointCount) {
+            val ep = iface.getEndpoint(k)
+            if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                if (ep.direction == UsbConstants.USB_DIR_IN) inEp = ep else outEp = ep
+            }
+        }
+        epIn = inEp ?: throw FastbootException("Endpoint IN tidak ditemukan")
+        epOut = outEp ?: throw FastbootException("Endpoint OUT tidak ditemukan")
+        if (!conn.claimInterface(iface, true)) throw FastbootException("Gagal mengklaim interface USB")
+    }
+
+    fun close() {
+        try {
+            conn.releaseInterface(iface)
+        } catch (e: Exception) {
+            // abaikan
+        }
+        conn.close()
+    }
+
+    private fun writeAll(buf: ByteArray, n: Int, timeout: Int) {
+        val part = if (n == buf.size) buf else buf.copyOf(n)
+        val w = conn.bulkTransfer(epOut, part, n, timeout)
+        if (w != n) throw FastbootException("Gagal mengirim ke HP (terkirim $w dari $n byte)")
+    }
+
+    private fun readResp(timeout: Int): Resp {
+        val buf = ByteArray(64)
+        val info = StringBuilder()
+        while (true) {
+            val n = conn.bulkTransfer(epIn, buf, buf.size, timeout)
+            if (n < 0) throw FastbootException("Tidak ada balasan dari HP (timeout atau kabel OTG terlepas)")
+            if (n == 0) continue
+            val s = String(buf, 0, n, Charsets.US_ASCII)
+            if (s.startsWith("INFO")) {
+                info.append(s.drop(4)).append('\n')
+            } else {
+                return Resp(s.take(4), (info.toString() + s.drop(4)).trim())
+            }
+        }
+    }
+
+    private fun expectOkay(r: Resp, what: String): String = when (r.code) {
+        "OKAY" -> r.text
+        "FAIL" -> throw FastbootException(if (r.text.isEmpty()) "HP menolak: $what" else "HP menolak: ${r.text}")
+        else -> throw FastbootException("Balasan tidak terduga (${r.code}) untuk: $what")
+    }
+
+    fun command(cmd: String, timeout: Int = READ_TIMEOUT): String {
+        val bytes = cmd.toByteArray(Charsets.US_ASCII)
+        writeAll(bytes, bytes.size, timeout)
+        return expectOkay(readResp(timeout), cmd)
+    }
+
+    fun getvar(name: String): String = command("getvar:$name").lines().last().trim()
+
+    fun download(stream: InputStream, size: Long, onProgress: (Long) -> Unit) {
+        val header = String.format("download:%08x", size).toByteArray(Charsets.US_ASCII)
+        writeAll(header, header.size, READ_TIMEOUT)
+        val r = readResp(READ_TIMEOUT)
+        if (r.code == "FAIL") throw FastbootException(r.text)
+        if (r.code != "DATA") throw FastbootException("Balasan download tidak terduga: ${r.code}")
+
+        val buf = ByteArray(CHUNK)
+        var sent = 0L
+        while (sent < size) {
+            val want = minOf(CHUNK.toLong(), size - sent).toInt()
+            var got = 0
+            while (got < want) {
+                val k = stream.read(buf, got, want - got)
+                if (k < 0) throw IOException("File berakhir sebelum selesai dibaca")
+                got += k
+            }
+            writeAll(buf, want, DATA_TIMEOUT)
+            sent += want
+            onProgress(sent)
+        }
+        expectOkay(readResp(DATA_TIMEOUT), "data")
+    }
+}
+
+private fun parseHex(s: String?): Long? =
+    s?.trim()?.lowercase()?.removePrefix("0x")?.toLongOrNull(16)
+
+private fun human(b: Long): String = when {
+    b >= (1L shl 30) -> "%.2f GB".format(b / 1073741824.0)
+    b >= (1L shl 20) -> "%.2f MB".format(b / 1048576.0)
+    b >= (1L shl 10) -> "%.2f KB".format(b / 1024.0)
+    else -> "$b B"
+}
 
 class MainActivity : Activity() {
+
+    companion object {
+        private const val ACTION_USB_PERMISSION = "com.skypin.flasher.USB_PERMISSION"
+        private const val REQ_PICK_IMG = 1001
+    }
+
+    private class Plan(val target: String, val partSize: Long, val fileSize: Long, val slot: String)
+
+    private val worker = Executors.newSingleThreadExecutor()
     private lateinit var usb: UsbManager
-    private lateinit var log: TextView
+    private lateinit var logView: TextView
+    private lateinit var logScroll: ScrollView
+    private lateinit var readButton: Button
+    private lateinit var partitionInput: EditText
+    private lateinit var pickButton: Button
+    private lateinit var fileInfo: TextView
+    private lateinit var flashButton: Button
+    private lateinit var afterPanel: LinearLayout
+
+    private var busy = false
+    private var selUri: Uri? = null
+    private var selName = ""
+    private var selSize = 0L
+    private var selMagic = ""
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
-            val device: UsbDevice? = if (Build.VERSION.SDK_INT >= 33) {
-                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-            }
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            if (granted && device != null) {
-                readDevice(device)
-            } else {
-                append("Izin USB ditolak.")
-            }
+            log(if (granted) "Izin USB diberikan. Tekan tombol lagi." else "Izin USB ditolak.")
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        usb = getSystemService(USB_SERVICE) as UsbManager
-
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setPadding(32, 32, 32, 32)
-
-        val button = Button(this)
-        button.text = "Cari HP target (mode fastboot)"
-        button.setOnClickListener { cariTarget() }
-        root.addView(button)
-
-        val scroll = ScrollView(this)
-        log = TextView(this)
-        log.textSize = 16f
-        scroll.addView(log)
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-        )
-        setContentView(root)
-
+        usb = getSystemService(Context.USB_SERVICE) as UsbManager
+        buildUi()
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(permissionReceiver, filter, RECEIVER_NOT_EXPORTED)
+            registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(permissionReceiver, filter)
         }
-
-        append("Flasher v0.1 siap.\nSambungkan HP target lewat OTG dalam mode fastboot, lalu tekan tombol di atas.")
     }
 
     override fun onDestroy() {
         unregisterReceiver(permissionReceiver)
+        worker.shutdownNow()
         super.onDestroy()
     }
 
-    private fun append(text: String) {
-        runOnUiThread { log.append(text + "\n\n") }
+    private fun buildUi() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+        }
+
+        readButton = Button(this).apply {
+            text = "Cek HP target (mode fastboot)"
+            setOnClickListener { onReadPressed() }
+        }
+        root.addView(readButton)
+
+        root.addView(TextView(this).apply {
+            text = "\nNama partisi yang di-flash (contoh: boot, vendor_boot):"
+        })
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(TextView(this).apply { text = "fastboot flash " })
+        partitionInput = EditText(this).apply {
+            hint = "nama partisi"
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        row.addView(partitionInput)
+        root.addView(row)
+
+        pickButton = Button(this).apply {
+            text = "Pilih file .img"
+            setOnClickListener { onPickPressed() }
+        }
+        root.addView(pickButton)
+
+        fileInfo = TextView(this).apply { text = "Belum ada file dipilih." }
+        root.addView(fileInfo)
+
+        flashButton = Button(this).apply {
+            text = "Flash file ini"
+            setOnClickListener { onFlashPressed() }
+        }
+        root.addView(flashButton)
+
+        afterPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        afterPanel.addView(TextView(this).apply {
+            text = "Flash berhasil. Pilih langkah berikutnya:"
+        })
+        afterPanel.addView(Button(this).apply {
+            text = "Flash file lain"
+            setOnClickListener { resetSelection() }
+        })
+        afterPanel.addView(Button(this).apply {
+            text = "Reboot sistem (fastboot reboot)"
+            setOnClickListener { onRebootPressed() }
+        })
+        root.addView(afterPanel)
+
+        logView = TextView(this).apply { textSize = 13f }
+        logScroll = ScrollView(this).apply { addView(logView) }
+        root.addView(logScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        setContentView(root)
     }
 
-    private fun cariTarget() {
-        val target = usb.deviceList.values.firstOrNull { findFastbootIface(it) != null }
-        if (target == null) {
-            append("Tidak ada HP mode fastboot yang terdeteksi.\nCek kabel OTG dan pastikan HP target dalam mode fastboot.")
+    private fun log(msg: String) {
+        runOnUiThread {
+            logView.append(msg + "\n")
+            logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+        }
+    }
+
+    private fun setBusy(b: Boolean) {
+        runOnUiThread {
+            busy = b
+            readButton.isEnabled = !b
+            pickButton.isEnabled = !b
+            flashButton.isEnabled = !b
+        }
+    }
+
+    private fun isFastboot(i: UsbInterface): Boolean =
+        i.interfaceClass == 0xFF && i.interfaceSubclass == 0x42 && i.interfaceProtocol == 0x03
+
+    private fun findFastboot(): UsbDevice? =
+        usb.deviceList.values.firstOrNull { d ->
+            (0 until d.interfaceCount).any { i -> isFastboot(d.getInterface(i)) }
+        }
+
+    private fun askPermission(dev: UsbDevice) {
+        val pi = PendingIntent.getBroadcast(
+            this, 0,
+            Intent(ACTION_USB_PERMISSION).setPackage(packageName),
+            PendingIntent.FLAG_MUTABLE
+        )
+        usb.requestPermission(dev, pi)
+        log("Minta izin USB. Setujui di layar, lalu tekan tombol lagi.")
+    }
+
+    private fun openFastboot(dev: UsbDevice): Fastboot {
+        val iface = (0 until dev.interfaceCount).map { dev.getInterface(it) }.first { isFastboot(it) }
+        val conn = usb.openDevice(dev) ?: throw FastbootException("Gagal membuka perangkat USB")
+        return Fastboot(conn, iface)
+    }
+
+    private inline fun <T> withFastboot(dev: UsbDevice, block: (Fastboot) -> T): T {
+        val fb = openFastboot(dev)
+        try {
+            return block(fb)
+        } finally {
+            fb.close()
+        }
+    }
+
+    private fun tryGet(fb: Fastboot, name: String): String? =
+        try {
+            fb.getvar(name)
+        } catch (e: FastbootException) {
+            null
+        }
+
+    // ---------- Baca HP ----------
+
+    private fun onReadPressed() {
+        if (busy) return
+        val dev = findFastboot() ?: run {
+            log("HP tidak ditemukan. Pastikan HP Redmi dalam mode fastboot dan kabel OTG tersambung.")
             return
         }
-        if (usb.hasPermission(target)) {
-            readDevice(target)
-        } else {
-            append("Meminta izin USB... pilih Izinkan di layar.")
-            val pi = PendingIntent.getBroadcast(
-                this,
-                0,
-                Intent(ACTION_USB_PERMISSION).setPackage(packageName),
-                PendingIntent.FLAG_MUTABLE
-            )
-            usb.requestPermission(target, pi)
+        if (!usb.hasPermission(dev)) {
+            askPermission(dev)
+            return
         }
-    }
-
-    private fun findFastbootIface(d: UsbDevice): UsbInterface? {
-        for (i in 0 until d.interfaceCount) {
-            val iface = d.getInterface(i)
-            if (iface.interfaceClass == 0xFF &&
-                iface.interfaceSubclass == 0x42 &&
-                iface.interfaceProtocol == 0x03
-            ) {
-                return iface
-            }
-        }
-        return null
-    }
-
-    private fun readDevice(device: UsbDevice) {
-        thread {
-            var fb: Fastboot? = null
+        setBusy(true)
+        worker.execute {
             try {
-                val conn = usb.openDevice(device)
-                    ?: throw IllegalStateException("Gagal membuka perangkat")
-                val iface = findFastbootIface(device)
-                    ?: throw IllegalStateException("Antarmuka fastboot tidak ditemukan")
-                fb = Fastboot(conn, iface)
-                val product = fb.command("getvar:product").trim()
-                val serial = fb.command("getvar:serialno").trim()
-                val info = try {
-                    fb.command("oem device-info").trim()
-                } catch (e: Exception) {
-                    "tidak tersedia (${e.message})"
+                withFastboot(dev) { fb ->
+                    val product = fb.getvar("product")
+                    val serial = fb.getvar("serialno")
+                    val unlocked = tryGet(fb, "unlocked") ?: "tidak tersedia"
+                    val slot = tryGet(fb, "current-slot") ?: "tidak ada (bukan A/B)"
+                    log(
+                        "HASIL BACA (tidak ada perubahan di HP):\n" +
+                            "Codename: $product\n" +
+                            "Serial: $serial\n" +
+                            "Bootloader unlocked: $unlocked\n" +
+                            "Slot aktif: $slot"
+                    )
                 }
-                append(
-                    "HASIL BACA (tidak ada perubahan di HP):\n" +
-                        "Codename: $product\n" +
-                        "Serial: $serial\n" +
-                        "Bootloader:\n$info"
-                )
             } catch (e: Exception) {
-                append("Error: ${e.message}")
+                log("GAGAL: ${e.message}")
             } finally {
-                fb?.close()
+                setBusy(false)
             }
         }
     }
-}
 
-class Fastboot(private val conn: UsbDeviceConnection, private val iface: UsbInterface) {
-    private val inEp: UsbEndpoint
-    private val outEp: UsbEndpoint
+    // ---------- Pilih file ----------
 
-    init {
-        var i: UsbEndpoint? = null
-        var o: UsbEndpoint? = null
-        for (k in 0 until iface.endpointCount) {
-            val ep = iface.getEndpoint(k)
-            if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
-                if (ep.direction == UsbConstants.USB_DIR_IN) i = ep else o = ep
+    private fun onPickPressed() {
+        if (busy) return
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            setType("*/*")
+        }
+        startActivityForResult(intent, REQ_PICK_IMG)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PICK_IMG || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        loadFile(uri)
+    }
+
+    private fun loadFile(uri: Uri) {
+        var name = "?"
+        var size = 0L
+        contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val si = c.getColumnIndex(OpenableColumns.SIZE)
+            if (c.moveToFirst()) {
+                if (ni >= 0) name = c.getString(ni) ?: "?"
+                if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
             }
         }
-        inEp = i ?: throw IllegalStateException("Endpoint masuk tidak ditemukan")
-        outEp = o ?: throw IllegalStateException("Endpoint keluar tidak ditemukan")
-        if (!conn.claimInterface(iface, true)) {
-            throw IllegalStateException("Gagal mengklaim antarmuka USB")
+        val magic = try {
+            contentResolver.openInputStream(uri)?.use { s ->
+                val b = ByteArray(8)
+                val n = s.read(b)
+                if (n > 0) String(b, 0, n, Charsets.ISO_8859_1) else ""
+            } ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+
+        selUri = uri
+        selName = name
+        selSize = size
+        selMagic = magic
+
+        val magicLabel = when {
+            magic.startsWith("ANDROID!") -> "ANDROID! (format boot image)"
+            magic.startsWith("VNDRBOOT") -> "VNDRBOOT (format vendor_boot)"
+            else -> "tidak dikenali"
+        }
+        fileInfo.text = "File: $name\nUkuran: ${human(size)}\nIsi awal file: $magicLabel"
+        log("File dipilih: $name")
+    }
+
+    private fun resetSelection() {
+        selUri = null
+        selName = ""
+        selSize = 0L
+        selMagic = ""
+        fileInfo.text = "Belum ada file dipilih."
+        partitionInput.setText("")
+        afterPanel.visibility = View.GONE
+        log("Siap untuk file berikutnya.")
+    }
+
+    // ---------- Flash file img ----------
+
+    private fun checkPlan(fb: Fastboot, part: String, magic: String, size: Long): Plan {
+        val maxDownload = parseHex(tryGet(fb, "max-download-size"))
+            ?: throw FastbootException("Batas ukuran download HP tidak terbaca")
+        if (size > maxDownload) throw FastbootException("File lebih besar dari batas download HP")
+
+        val slot = tryGet(fb, "current-slot")?.lowercase()?.takeIf { it == "a" || it == "b" } ?: ""
+        val withSlot = if (slot.isNotEmpty()) "${part}_$slot" else part
+        val slotSize = if (slot.isNotEmpty()) parseHex(tryGet(fb, "partition-size:$withSlot")) else null
+
+        val target: String
+        val partSize: Long
+        if (slotSize != null) {
+            target = withSlot
+            partSize = slotSize
+        } else {
+            partSize = parseHex(tryGet(fb, "partition-size:$part"))
+                ?: throw FastbootException("Partisi '$part' tidak ditemukan di HP ini")
+            target = part
+        }
+
+        val base = part.removeSuffix("_a").removeSuffix("_b")
+        val expected = when (base) {
+            "boot", "init_boot" -> "ANDROID!"
+            "vendor_boot" -> "VNDRBOOT"
+            else -> null
+        }
+        if (expected != null && !magic.startsWith(expected)) {
+            throw FastbootException(
+                "Isi file tidak cocok untuk partisi $base (harus diawali $expected). Pilih file yang benar."
+            )
+        }
+        if (size > partSize) {
+            throw FastbootException("File (${human(size)}) lebih besar dari partisi $target (${human(partSize)})")
+        }
+        return Plan(target, partSize, size, slot)
+    }
+
+    private fun onFlashPressed() {
+        if (busy) return
+        val part = partitionInput.text.toString().trim().lowercase()
+        val uri = selUri
+        if (!Regex("[a-z0-9_]+").matches(part)) {
+            log("Nama partisi harus huruf kecil, angka, atau garis bawah. Contoh: boot")
+            return
+        }
+        if (uri == null) {
+            log("Pilih file .img dulu.")
+            return
+        }
+        if (selSize <= 0L) {
+            log("Ukuran file tidak terbaca. Pilih ulang file-nya.")
+            return
+        }
+        val dev = findFastboot() ?: run {
+            log("HP tidak ditemukan. Pastikan HP Redmi dalam mode fastboot dan kabel OTG tersambung.")
+            return
+        }
+        if (!usb.hasPermission(dev)) {
+            askPermission(dev)
+            return
+        }
+
+        setBusy(true)
+        val magic = selMagic
+        val size = selSize
+        worker.execute {
+            try {
+                val plan = withFastboot(dev) { fb -> checkPlan(fb, part, magic, size) }
+                runOnUiThread { confirmFlash(dev, plan, uri) }
+            } catch (e: Exception) {
+                log("GAGAL sebelum flash (tidak ada yang diubah): ${e.message}")
+                setBusy(false)
+            }
         }
     }
 
-    fun close() {
-        conn.releaseInterface(iface)
-        conn.close()
+    private fun confirmFlash(dev: UsbDevice, plan: Plan, uri: Uri) {
+        val slotText = if (plan.slot.isEmpty()) "tidak ada (bukan A/B)" else plan.slot
+        val msg = "Partisi tujuan: ${plan.target}\n" +
+            "Slot aktif: $slotText\n" +
+            "File: $selName (${human(plan.fileSize)})\n" +
+            "Ukuran partisi: ${human(plan.partSize)}\n\n" +
+            "Pastikan file ini untuk Redmi Note 15 4G (spinel) dan sesuai ROM yang terpasang.\n\n" +
+            "Lanjut flash?"
+        AlertDialog.Builder(this)
+            .setTitle("Konfirmasi flash")
+            .setMessage(msg)
+            .setPositiveButton("Flash") { _, _ -> startFlash(dev, plan, uri) }
+            .setNegativeButton("Batal") { _, _ ->
+                setBusy(false)
+                log("Dibatalkan. Tidak ada yang diubah.")
+            }
+            .setOnCancelListener {
+                setBusy(false)
+                log("Dibatalkan. Tidak ada yang diubah.")
+            }
+            .show()
     }
 
-    fun command(cmd: String, timeoutMs: Int = 5000): String {
-        val out = cmd.toByteArray(StandardCharsets.UTF_8)
-        if (conn.bulkTransfer(outEp, out, out.size, timeoutMs) < 0) {
-            throw IllegalStateException("Gagal mengirim perintah: $cmd")
+    private fun doFlash(fb: Fastboot, plan: Plan, uri: Uri) {
+        val stream = contentResolver.openInputStream(uri) ?: throw IOException("Tidak bisa membuka file")
+        stream.use { s ->
+            log("Mengirim file ke HP (${human(plan.fileSize)})...")
+            fb.download(s, plan.fileSize) { sent ->
+                if (sent % (64L * 1024 * 1024) == 0L || sent == plan.fileSize) {
+                    log("  terkirim ${human(sent)} / ${human(plan.fileSize)}")
+                }
+            }
         }
-        val info = StringBuilder()
-        while (true) {
-            val buf = ByteArray(64)
-            val n = conn.bulkTransfer(inEp, buf, buf.size, timeoutMs)
-            if (n < 0) throw IllegalStateException("Tidak ada balasan untuk: $cmd")
-            if (n == 0) continue
-            val resp = String(buf, 0, n, StandardCharsets.UTF_8)
-            when {
-                resp.startsWith("INFO") -> info.append(resp.substring(4)).append('\n')
-                resp.startsWith("OKAY") -> return info.toString() + resp.substring(4)
-                resp.startsWith("FAIL") -> throw IllegalStateException("FAIL: " + resp.substring(4))
-                else -> throw IllegalStateException("Balasan tidak dikenal: $resp")
+        log("Mem-flash ${plan.target}, mohon tunggu...")
+        val info = fb.command("flash:${plan.target}", FLASH_TIMEOUT)
+        if (info.isNotEmpty()) log(info)
+    }
+
+    private fun startFlash(dev: UsbDevice, plan: Plan, uri: Uri) {
+        worker.execute {
+            try {
+                withFastboot(dev) { fb -> doFlash(fb, plan, uri) }
+                log("BERHASIL: ${plan.target} sudah di-flash.")
+                runOnUiThread { afterPanel.visibility = View.VISIBLE }
+            } catch (e: Exception) {
+                log("GAGAL saat flash: ${e.message}")
+            } finally {
+                setBusy(false)
+            }
+        }
+    }
+
+    // ---------- Reboot ----------
+
+    private fun onRebootPressed() {
+        if (busy) return
+        val dev = findFastboot()
+        if (dev == null) {
+            log("HP tidak ditemukan.")
+            return
+        }
+        if (!usb.hasPermission(dev)) {
+            askPermission(dev)
+            return
+        }
+        setBusy(true)
+        worker.execute {
+            try {
+                withFastboot(dev) { fb -> fb.command("reboot") }
+                log("Perintah reboot sistem dikirim. HP akan restart.")
+            } catch (e: Exception) {
+                log("Catatan reboot: ${e.message}")
+            } finally {
+                setBusy(false)
             }
         }
     }
