@@ -136,6 +136,8 @@ private fun human(b: Long): String = when {
     else -> "$b B"
 }
 
+private fun slotLabel(slot: String): String = if (slot.isEmpty()) "tidak ada (bukan A/B)" else slot
+
 class MainActivity : Activity() {
 
     companion object {
@@ -143,19 +145,31 @@ class MainActivity : Activity() {
         private const val REQ_PICK_IMG = 1001
     }
 
-    private class Plan(val target: String, val partSize: Long, val fileSize: Long, val slot: String)
+    // Data HP target dari hasil "Cek HP target". Semua flash dicocokkan dengan data ini.
+    private class TargetInfo(val product: String, val serial: String, val unlocked: String, val slot: String)
+
+    private class Plan(
+        val product: String,
+        val serial: String,
+        val target: String,
+        val partSize: Long,
+        val fileSize: Long,
+        val slot: String
+    )
 
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var usb: UsbManager
     private lateinit var logView: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var readButton: Button
+    private lateinit var targetView: TextView
     private lateinit var partitionInput: EditText
     private lateinit var pickButton: Button
     private lateinit var fileInfo: TextView
     private lateinit var flashButton: Button
     private lateinit var afterPanel: LinearLayout
 
+    @Volatile private var checkedTarget: TargetInfo? = null
     private var busy = false
     private var selUri: Uri? = null
     private var selName = ""
@@ -199,6 +213,11 @@ class MainActivity : Activity() {
             setOnClickListener { onReadPressed() }
         }
         root.addView(readButton)
+
+        targetView = TextView(this).apply {
+            text = "Target belum dicek. Tekan \"Cek HP target\" dulu."
+        }
+        root.addView(targetView)
 
         root.addView(TextView(this).apply {
             text = "\nNama partisi yang di-flash (contoh: boot, vendor_boot):"
@@ -311,12 +330,36 @@ class MainActivity : Activity() {
             null
         }
 
-    // ---------- Baca HP ----------
+    private fun targetLabel(t: TargetInfo): String =
+        "Target: ${t.product} | serial ${t.serial} | bootloader unlocked: ${t.unlocked} | slot: ${slotLabel(t.slot)}"
+
+    // Membaca data HP yang sedang terhubung. Gagal jika codename atau serial tidak terbaca.
+    private fun readTarget(fb: Fastboot): TargetInfo {
+        val product = tryGet(fb, "product")?.takeIf { it.isNotEmpty() }
+            ?: throw FastbootException("Codename HP tidak terbaca. Flash diblokir.")
+        val serial = tryGet(fb, "serialno")?.takeIf { it.isNotEmpty() }
+            ?: throw FastbootException("Serial HP tidak terbaca. Flash diblokir.")
+        val unlocked = tryGet(fb, "unlocked") ?: "tidak tersedia"
+        val slot = tryGet(fb, "current-slot")?.lowercase()?.takeIf { it == "a" || it == "b" } ?: ""
+        return TargetInfo(product, serial, unlocked, slot)
+    }
+
+    // Memastikan HP yang terhubung sekarang sama dengan HP yang sudah dicek.
+    private fun ensureSameDevice(now: TargetInfo, expectedProduct: String, expectedSerial: String) {
+        if (now.product != expectedProduct || now.serial != expectedSerial) {
+            throw FastbootException(
+                "HP yang terhubung (${now.product}, ${now.serial}) berbeda dengan hasil Cek HP target " +
+                    "($expectedProduct, $expectedSerial). Tekan Cek HP target lagi."
+            )
+        }
+    }
+
+    // ---------- Cek HP target ----------
 
     private fun onReadPressed() {
         if (busy) return
         val dev = findFastboot() ?: run {
-            log("HP tidak ditemukan. Pastikan HP Redmi dalam mode fastboot dan kabel OTG tersambung.")
+            log("HP tidak ditemukan. Pastikan HP target dalam mode fastboot dan kabel OTG tersambung.")
             return
         }
         if (!usb.hasPermission(dev)) {
@@ -327,19 +370,20 @@ class MainActivity : Activity() {
         worker.execute {
             try {
                 withFastboot(dev) { fb ->
-                    val product = fb.getvar("product")
-                    val serial = fb.getvar("serialno")
-                    val unlocked = tryGet(fb, "unlocked") ?: "tidak tersedia"
-                    val slot = tryGet(fb, "current-slot") ?: "tidak ada (bukan A/B)"
+                    val info = readTarget(fb)
+                    checkedTarget = info
+                    runOnUiThread { targetView.text = targetLabel(info) }
                     log(
                         "HASIL BACA (tidak ada perubahan di HP):\n" +
-                            "Codename: $product\n" +
-                            "Serial: $serial\n" +
-                            "Bootloader unlocked: $unlocked\n" +
-                            "Slot aktif: $slot"
+                            "Codename: ${info.product}\n" +
+                            "Serial: ${info.serial}\n" +
+                            "Bootloader unlocked: ${info.unlocked}\n" +
+                            "Slot aktif: ${slotLabel(info.slot)}"
                     )
                 }
             } catch (e: Exception) {
+                checkedTarget = null
+                runOnUiThread { targetView.text = "Target belum siap: ${e.message}" }
                 log("GAGAL: ${e.message}")
             } finally {
                 setBusy(false)
@@ -413,7 +457,7 @@ class MainActivity : Activity() {
 
     // ---------- Flash file img ----------
 
-    private fun checkPlan(fb: Fastboot, part: String, magic: String, size: Long): Plan {
+    private fun checkPlan(fb: Fastboot, part: String, magic: String, size: Long, product: String, serial: String): Plan {
         val maxDownload = parseHex(tryGet(fb, "max-download-size"))
             ?: throw FastbootException("Batas ukuran download HP tidak terbaca")
         if (size > maxDownload) throw FastbootException("File lebih besar dari batas download HP")
@@ -422,15 +466,15 @@ class MainActivity : Activity() {
         val withSlot = if (slot.isNotEmpty()) "${part}_$slot" else part
         val slotSize = if (slot.isNotEmpty()) parseHex(tryGet(fb, "partition-size:$withSlot")) else null
 
-        val target: String
+        val partName: String
         val partSize: Long
         if (slotSize != null) {
-            target = withSlot
+            partName = withSlot
             partSize = slotSize
         } else {
             partSize = parseHex(tryGet(fb, "partition-size:$part"))
-                ?: throw FastbootException("Partisi '$part' tidak ditemukan di HP ini")
-            target = part
+                ?: throw FastbootException("Partisi '$part' tidak ditemukan di HP $product")
+            partName = part
         }
 
         val base = part.removeSuffix("_a").removeSuffix("_b")
@@ -445,13 +489,17 @@ class MainActivity : Activity() {
             )
         }
         if (size > partSize) {
-            throw FastbootException("File (${human(size)}) lebih besar dari partisi $target (${human(partSize)})")
+            throw FastbootException("File (${human(size)}) lebih besar dari partisi $partName (${human(partSize)})")
         }
-        return Plan(target, partSize, size, slot)
+        return Plan(product, serial, partName, partSize, size, slot)
     }
 
     private fun onFlashPressed() {
         if (busy) return
+        val expected = checkedTarget ?: run {
+            log("Tekan \"Cek HP target\" dulu. Flash diblokir sampai HP target dicek.")
+            return
+        }
         val part = partitionInput.text.toString().trim().lowercase()
         val uri = selUri
         if (!Regex("[a-z0-9_]+").matches(part)) {
@@ -467,7 +515,7 @@ class MainActivity : Activity() {
             return
         }
         val dev = findFastboot() ?: run {
-            log("HP tidak ditemukan. Pastikan HP Redmi dalam mode fastboot dan kabel OTG tersambung.")
+            log("HP tidak ditemukan. Pastikan HP target dalam mode fastboot dan kabel OTG tersambung.")
             return
         }
         if (!usb.hasPermission(dev)) {
@@ -480,7 +528,11 @@ class MainActivity : Activity() {
         val size = selSize
         worker.execute {
             try {
-                val plan = withFastboot(dev) { fb -> checkPlan(fb, part, magic, size) }
+                val plan = withFastboot(dev) { fb ->
+                    val now = readTarget(fb)
+                    ensureSameDevice(now, expected.product, expected.serial)
+                    checkPlan(fb, part, magic, size, now.product, now.serial)
+                }
                 runOnUiThread { confirmFlash(dev, plan, uri) }
             } catch (e: Exception) {
                 log("GAGAL sebelum flash (tidak ada yang diubah): ${e.message}")
@@ -490,12 +542,12 @@ class MainActivity : Activity() {
     }
 
     private fun confirmFlash(dev: UsbDevice, plan: Plan, uri: Uri) {
-        val slotText = if (plan.slot.isEmpty()) "tidak ada (bukan A/B)" else plan.slot
-        val msg = "Partisi tujuan: ${plan.target}\n" +
-            "Slot aktif: $slotText\n" +
+        val msg = "HP target: ${plan.product} (serial ${plan.serial})\n" +
+            "Partisi tujuan: ${plan.target}\n" +
+            "Slot aktif: ${slotLabel(plan.slot)}\n" +
             "File: $selName (${human(plan.fileSize)})\n" +
             "Ukuran partisi: ${human(plan.partSize)}\n\n" +
-            "Pastikan file ini untuk Redmi Note 15 4G (spinel) dan sesuai ROM yang terpasang.\n\n" +
+            "Pastikan file ini berasal dari ROM yang terpasang di HP target (${plan.product}), bukan dari HP lain.\n\n" +
             "Lanjut flash?"
         AlertDialog.Builder(this)
             .setTitle("Konfirmasi flash")
@@ -530,7 +582,12 @@ class MainActivity : Activity() {
     private fun startFlash(dev: UsbDevice, plan: Plan, uri: Uri) {
         worker.execute {
             try {
-                withFastboot(dev) { fb -> doFlash(fb, plan, uri) }
+                withFastboot(dev) { fb ->
+                    // Cek ulang sebelum menulis: HP yang terhubung harus masih sama.
+                    val now = readTarget(fb)
+                    ensureSameDevice(now, plan.product, plan.serial)
+                    doFlash(fb, plan, uri)
+                }
                 log("BERHASIL: ${plan.target} sudah di-flash.")
                 runOnUiThread { afterPanel.visibility = View.VISIBLE }
             } catch (e: Exception) {
