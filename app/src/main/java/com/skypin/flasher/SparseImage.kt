@@ -145,6 +145,8 @@ object SparseImage {
 
     /**
      * Memecah gambar menjadi beberapa bagian sparse, masing-masing <= maxDl byte.
+     * Mengikuti aturan libsparse (fastboot): chunk yang tidak muat hanya dipecah jika
+     * sisa ruang bagian lebih dari 1/8 maxDl. Jika tidak, bagian berakhir sebelum chunk itu.
      * Setiap bagian memakai DONT_CARE untuk melewati area yang tidak ada di bagian itu.
      */
     fun planParts(m: SparseMap, maxDl: Long): List<SparsePart> {
@@ -159,23 +161,33 @@ object SparseImage {
             while (ci < m.chunks.size) {
                 val c = m.chunks[ci]
                 val start = c.outBlk + consumed
-                if (start > out) {
-                    if (budget < CHUNK_HDR) break
-                    items.add(PItem(CHUNK_DONT_CARE, start - out, 0L, 0L, null))
-                    budget -= CHUNK_HDR
-                    out = start
-                }
+                val gapBlks = if (start > out) start - out else 0L
+                val gapCost = if (gapBlks > 0L) CHUNK_HDR.toLong() else 0L
                 val remain = c.blks - consumed
                 if (c.type == CHUNK_FILL) {
-                    if (budget < CHUNK_HDR + 4) break
+                    if (budget < gapCost + CHUNK_HDR + 4) break
+                    if (gapBlks > 0L) {
+                        items.add(PItem(CHUNK_DONT_CARE, gapBlks, 0L, 0L, null))
+                        budget -= CHUNK_HDR
+                        out = start
+                    }
                     items.add(PItem(CHUNK_FILL, remain, 0L, 0L, c.fill))
                     budget -= CHUNK_HDR + 4
                     out += remain
                     ci++
                     consumed = 0L
                 } else {
-                    val maxN = (budget - CHUNK_HDR) / blk
+                    val free = budget - gapCost - CHUNK_HDR // ruang untuk payload RAW
+                    val maxN = free / blk
                     if (maxN <= 0L) break
+                    val hasData = items.any { it.type != CHUNK_DONT_CARE }
+                    // Chunk tidak muat dan sisa ruang <= 1/8 maxDl: bagian diakhiri, chunk pindah ke bagian berikutnya.
+                    if (remain > maxN && hasData && free <= maxDl / 8) break
+                    if (gapBlks > 0L) {
+                        items.add(PItem(CHUNK_DONT_CARE, gapBlks, 0L, 0L, null))
+                        budget -= CHUNK_HDR
+                        out = start
+                    }
                     val n = min(remain, maxN)
                     val off = c.srcOff + consumed * blk
                     val avail = if (m.isSparse) n * blk else max(0L, min(n * blk, m.rawSize - off))
