@@ -74,7 +74,8 @@ class FlashRomActivity : FlasherBase() {
     }
 
     private fun setRom(src: RomSource, name: String) {
-        val scripts = listScripts(src)
+        // Script flash_all_except_data_storage.sh tidak dipakai di aplikasi ini, jadi disembunyikan dari daftar
+        val scripts = listScripts(src).filter { it != "flash_all_except_data_storage.sh" }
         romSource = src
         romName = name
         romScripts = scripts
