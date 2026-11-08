@@ -293,10 +293,17 @@ fun runPlan(fb: Fastboot, src: RomSource, plan: RomPlan, dry: Boolean, log: (Str
             }
             is Step.Flash -> {
                 val size = src.size(step.file)
-                val label = "$tag ${step.describe()} (${human(size)})"
-                guarded(step.checked, label, log) {
-                    flashImage(fb, ImageSrc(size) { src.open(step.file) }, step.part, dev.maxDownload, dry) { m ->
+                if (dry) {
+                    log("$tag [UJI] ${step.describe()} (${human(size)})")
+                    flashImage(fb, ImageSrc(size) { src.open(step.file) }, step.part, dev.maxDownload, true) { m ->
                         log(m)
+                    }
+                } else {
+                    val label = "$tag ${step.describe()} (${human(size)})"
+                    guarded(step.checked, label, log) {
+                        flashImage(fb, ImageSrc(size) { src.open(step.file) }, step.part, dev.maxDownload, false) { m ->
+                            log(m)
+                        }
                     }
                 }
             }
@@ -304,7 +311,8 @@ fun runPlan(fb: Fastboot, src: RomSource, plan: RomPlan, dry: Boolean, log: (Str
                 if (dry) {
                     log("$tag [UJI] ${step.describe()}")
                 } else {
-                    guarded(false, "$tag ${step.describe()}", log) { fb.setActive(step.slot) }
+                    // Gagal = berhenti sebelum oem cdms dan reboot. current-slot belum berubah sebelum reboot, jadi tidak dicek di sini.
+                    guarded(true, "$tag ${step.describe()}", log) { fb.setActive(step.slot) }
                 }
             }
             is Step.Oem -> {
