@@ -13,7 +13,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
+        <activity android:name=".FlashImgActivity" android:exported="false" />
+        <activity android:name=".FlashRomActivity" android:exported="false" />
     </application>
 
 </manifest>
