@@ -2,6 +2,7 @@ package com.skypin.flasher
 
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -147,10 +148,10 @@ class FlashRomActivity : FlasherBase() {
             tr("Mode uji: tidak ada data yang dikirim ke perangkat. Lanjutkan?",
                 "Test mode: no data is sent to the device. Continue?")
         } else {
-            tr("PERINGATAN: flash ROM ini menghapus semua data di ${t.product} (${t.serial}) " +
-                "dan menimpa root serta OrangeFox. Lanjutkan?",
-                "WARNING: this ROM flash erases all data on ${t.product} (${t.serial}) " +
-                    "and overwrites root and OrangeFox. Continue?")
+            tr("PERINGATAN: flash asli akan menghapus semua data di ${t.product} (${t.serial}) " +
+                "dan menimpa semua partisi yang sudah di ubah. Lanjutkan?",
+                "WARNING: real flash will erase all data on ${t.product} (${t.serial}) " +
+                    "and overwrite every changed partition. Continue?")
         }
         confirm(msg) {
             runTask(if (dry) tr("Mode uji ROM", "ROM test mode") else tr("Flash ROM", "Flash ROM")) {
@@ -172,8 +173,8 @@ class FlashRomActivity : FlasherBase() {
             setPadding(dp(16), dp(16), dp(16), dp(8))
             setBackgroundColor(p.bg)
         }
-        content.addView(btn(tr("← Kembali", "← Back"), BtnStyle.SECONDARY) { finish() })
-        content.addView(textLine(tr("Flash fastboot ROM tgz", "Flash fastboot ROM tgz"), 22f, medium = true).apply {
+        content.addView(backButton { finish() })
+        content.addView(textLine(tr("Flash fastboot ROM tgz", "Flash fastboot ROM tgz"), 22f, medium = true, color = p.accent).apply {
             setPadding(0, dp(8), 0, 0)
         })
         val tgt = Session.target
@@ -223,24 +224,34 @@ class FlashRomActivity : FlasherBase() {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        modeText.addView(textLine(tr("Mode uji", "Test mode"), 14f, medium = true))
+        modeText.addView(textLine(tr("Mode uji", "Test mode"), 14f, medium = true, color = p.accent))
         modeText.addView(textLine(tr("Tidak mengirim data", "Sends no data"), 12f, color = p.muted))
         modeRow.addView(modeText)
-        dryRunSwitch = Switch(this).apply { isChecked = true }
+        dryRunSwitch = Switch(this).apply {
+            isChecked = true
+            trackTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(p.accent, p.border)
+            )
+            thumbTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(p.onAccent, p.muted)
+            )
+        }
         modeRow.addView(dryRunSwitch)
         form.addView(modeRow)
 
         val warn = box()
         warn.background = rounded(p.warnBg, 10, null)
         warn.addView(textLine(
-            tr("Flash asli menghapus semua data dan menimpa root serta OrangeFox.",
-                "Real flash erases all data and overwrites root and OrangeFox."),
+            tr("Flash asli akan menghapus semua data dan menimpa semua partisi yang sudah di ubah.",
+                "Real flash will erase all data and overwrite every changed partition."),
             12f,
             color = p.warnText
         ))
         form.addView(warn)
 
-        form.addView(btn(tr("Jalankan ROM", "Run ROM"), BtnStyle.DANGER) { onRunRom() })
+        form.addView(btn(tr("JALANKAN", "RUN"), BtnStyle.PRIMARY) { onRunRom() })
         content.addView(form)
 
         setContentView(page(ScrollView(this).apply { addView(content) }, makeLog()))

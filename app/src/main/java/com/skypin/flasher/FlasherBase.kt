@@ -7,9 +7,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbInterface
@@ -34,36 +38,28 @@ const val REQ_PICK_IMG = 1001
 const val REQ_PICK_TREE = 1002
 const val REQ_PICK_TGZ = 1003
 
-/** Data bersama: hasil Cek HP target, bahasa, dan mode terang atau gelap. */
+/** Data bersama: hasil CEK FASTBOOT dan bahasa. */
 object Session {
     @Volatile var target: DeviceInfo? = null
     /** "yes", "no", "unknown", atau teks mentah dari perangkat. Kosong jika belum dicek. */
     @Volatile var unlocked: String = ""
     /** "id" atau "en". */
     @Volatile var lang: String = "id"
-    @Volatile var dark: Boolean = false
     private var loaded = false
 
-    /** Membaca setelan tersimpan. Jika belum ada, bahasa mengikuti HP dan mode mengikuti sistem. */
+    /** Membaca setelan tersimpan. Jika belum ada, bahasa mengikuti HP. */
     @Synchronized
     fun load(ctx: Context) {
         if (loaded) return
         val p = ctx.getSharedPreferences("flasher", Context.MODE_PRIVATE)
         val sysLang = Locale.getDefault().language
         lang = p.getString("lang", null) ?: if (sysLang == "in" || sysLang == "id") "id" else "en"
-        dark = if (p.contains("dark")) {
-            p.getBoolean("dark", false)
-        } else {
-            (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
-        }
         loaded = true
     }
 
     fun save(ctx: Context) {
         ctx.getSharedPreferences("flasher", Context.MODE_PRIVATE).edit()
             .putString("lang", lang)
-            .putBoolean("dark", dark)
             .apply()
     }
 }
@@ -93,7 +89,7 @@ object Fonts {
         }
 }
 
-/** Warna untuk satu mode (terang atau gelap). */
+/** Warna aplikasi: mode gelap dengan latar navy seperti logo. */
 class Palette(
     val bg: Int,
     val card: Int,
@@ -119,30 +115,19 @@ class Palette(
 
 private fun hex(s: String): Int = Color.parseColor(s)
 
-private val LIGHT = Palette(
-    bg = hex("#F6F5F2"), card = hex("#FFFFFF"), sub = hex("#F1EFEA"),
-    text = hex("#1A1A1A"), sec = hex("#4A4A4A"), muted = hex("#6B6B6B"),
-    border = hex("#DDDAD3"), accent = hex("#2F5BEA"), onAccent = hex("#FFFFFF"),
-    soft = hex("#E4EBFD"), ok = hex("#E3F4E8"), okText = hex("#1E7A3C"),
-    warnBg = hex("#FFF4DE"), warnText = hex("#8A5A00"),
-    danger = hex("#B3261E"), onDanger = hex("#FFFFFF"),
-    tgSoft = hex("#E3F4FC"), tgIcon = hex("#1E9BD7"),
-    ghSoft = hex("#ECEBEA"), ghIcon = hex("#1A1A1A")
-)
-
 private val DARK = Palette(
-    bg = hex("#121212"), card = hex("#1E1E1E"), sub = hex("#262626"),
-    text = hex("#EDEDED"), sec = hex("#BDBDBD"), muted = hex("#9A9A9A"),
-    border = hex("#2E2E2E"), accent = hex("#8AB4FF"), onAccent = hex("#0E1A33"),
-    soft = hex("#22304D"), ok = hex("#1B3A26"), okText = hex("#8FDCA6"),
-    warnBg = hex("#3A2E12"), warnText = hex("#F5CD7A"),
+    bg = hex("#0A0F1A"), card = hex("#0F1A2B"), sub = hex("#13213A"),
+    text = hex("#D6DDE8"), sec = hex("#B8C2D4"), muted = hex("#7D8BA3"),
+    border = hex("#1C2B44"), accent = hex("#3DBB4A"), onAccent = hex("#0A0F1A"),
+    soft = hex("#0F2A1A"), ok = hex("#123A1D"), okText = hex("#3DBB4A"),
+    warnBg = hex("#2E2610"), warnText = hex("#F5CD7A"),
     danger = hex("#8C1D18"), onDanger = hex("#FFFFFF"),
     tgSoft = hex("#103447"), tgIcon = hex("#6CCBF5"),
-    ghSoft = hex("#2A2A2A"), ghIcon = hex("#EDEDED")
+    ghSoft = hex("#1B2433"), ghIcon = hex("#D6DDE8")
 )
 
 /** Palet untuk mode yang sedang aktif. */
-fun pal(): Palette = if (Session.dark) DARK else LIGHT
+fun pal(): Palette = DARK
 
 /** Teks Indonesia atau Inggris, mengikuti setelan bahasa. */
 fun tr(id: String, en: String): String = if (Session.lang == "en") en else id
@@ -154,6 +139,38 @@ private val DEVICE_NAMES = mapOf(
 
 /** Nama pasar dari codename. Codename yang belum ada di tabel tampil apa adanya. */
 fun marketName(codename: String): String = DEVICE_NAMES[codename] ?: codename
+
+/** Panah kiri yang digambar sendiri, supaya pas di tengah dan ukurannya jelas. */
+class BackArrowDrawable(private val strokePx: Float, arrowColor: Int) : Drawable() {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = arrowColor
+        style = Paint.Style.STROKE
+        strokeWidth = strokePx
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    override fun draw(canvas: Canvas) {
+        val r = bounds
+        val cx = r.exactCenterX()
+        val cy = r.exactCenterY()
+        val s = minOf(r.width(), r.height()) / 2f * 0.72f
+        val arm = s * 0.9f
+        canvas.drawLine(cx - s, cy, cx + s, cy, paint)
+        canvas.drawLine(cx - s, cy, cx - s + arm, cy - arm, paint)
+        canvas.drawLine(cx - s, cy, cx - s + arm, cy + arm, paint)
+    }
+
+    override fun setAlpha(alpha: Int) {
+        paint.alpha = alpha
+    }
+
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        paint.colorFilter = colorFilter
+    }
+
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
 
 /** Gaya tombol: utama, sekunder (garis tepi), dan bahaya. */
 enum class BtnStyle { PRIMARY, SECONDARY, DANGER }
@@ -198,13 +215,12 @@ abstract class FlasherBase : Activity() {
         super.onDestroy()
     }
 
-    /** Warna bar status dan navigasi mengikuti mode. */
+    /** Warna bar status dan navigasi mengikuti latar aplikasi. */
     protected fun applyWindow() {
         val p = pal()
         window.statusBarColor = p.bg
         window.navigationBarColor = p.bg
-        window.decorView.systemUiVisibility =
-            if (Session.dark) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        window.decorView.systemUiVisibility = 0
     }
 
     /** Area log di bawah layar. Bisa dibuka dan ditutup. Halaman tanpa log memakai notifikasi singkat. */
@@ -217,7 +233,7 @@ abstract class FlasherBase : Activity() {
         }
         logView = tv
         logScroll = sv
-        val title = textLine("Log  ▼", 12f, medium = true, color = p.muted)
+        val title = textLine("Log  ▼", 12f, medium = true, color = p.accent)
         var open = true
         title.setOnClickListener {
             open = !open
@@ -329,7 +345,7 @@ abstract class FlasherBase : Activity() {
         }
     }
 
-    /** Perangkat yang terhubung harus sama dengan hasil Cek HP target. */
+    /** Perangkat yang terhubung harus sama dengan hasil CEK FASTBOOT. */
     protected fun ensureSameDevice(now: DeviceInfo, expected: DeviceInfo) {
         if (now.product.isBlank() || now.serial.isBlank()) {
             throw FastbootException(tr("Codename atau serial tidak terbaca. Flash diblokir.", "Codename or serial could not be read. Flashing is blocked."))
@@ -337,8 +353,8 @@ abstract class FlasherBase : Activity() {
         if (now.product != expected.product || now.serial != expected.serial) {
             throw FastbootException(
                 tr(
-                    "Perangkat berbeda dari hasil Cek HP target. Flash diblokir. Tekan Cek HP target lagi di halaman utama.",
-                    "The device differs from the Check target phone result. Flashing is blocked. Press Check target phone again on the main page."
+                    "Perangkat berbeda dari hasil CEK FASTBOOT. Flash diblokir. Tekan CEK FASTBOOT lagi di halaman utama.",
+                    "The device differs from the CHECK FASTBOOT DEVICE result. Flashing is blocked. Press CHECK FASTBOOT DEVICE again on the main page."
                 )
             )
         }
@@ -350,8 +366,8 @@ abstract class FlasherBase : Activity() {
         if (t == null) {
             alert(
                 tr(
-                    "Tekan Cek HP target di halaman utama dulu. Flash diblokir sebelum perangkat dicek.",
-                    "Press Check target phone on the main page first. Flashing is blocked until the device is checked."
+                    "Tekan CEK FASTBOOT di halaman utama dulu. Flash diblokir sebelum perangkat dicek.",
+                    "Press CHECK FASTBOOT DEVICE on the main page first. Flashing is blocked until the device is checked."
                 )
             )
         }
@@ -457,7 +473,7 @@ abstract class FlasherBase : Activity() {
         }
         val fg = when (style) {
             BtnStyle.PRIMARY -> p.onAccent
-            BtnStyle.SECONDARY -> p.text
+            BtnStyle.SECONDARY -> p.accent
             BtnStyle.DANGER -> p.onDanger
         }
         val stroke: Int? = if (style == BtnStyle.SECONDARY) p.border else null
@@ -484,6 +500,29 @@ abstract class FlasherBase : Activity() {
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginEnd = dp(6)
+        }
+    }
+
+    /** Tombol kembali: panah yang digambar di tengah, lalu tulisan Kembali. */
+    protected fun backButton(onClick: () -> Unit): LinearLayout {
+        val p = pal()
+        val arrow = View(this).apply {
+            background = BackArrowDrawable(2f * resources.displayMetrics.density, p.accent)
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
+        }
+        val label = textLine(tr("Kembali", "Back"), 15f, color = p.accent)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            minimumHeight = dp(48)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = rounded(p.card, 10, p.border)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+            layoutParams = lp(top = 8)
+            addView(arrow)
+            addView(label)
         }
     }
 
@@ -518,7 +557,7 @@ abstract class FlasherBase : Activity() {
                 marginStart = dp(10)
             }
         }
-        col.addView(textLine(title, 14f, medium = true))
+        col.addView(textLine(title, 14f, medium = true, color = p.accent))
         col.addView(textLine(sub, 12f, color = p.muted))
         row.addView(col)
         row.addView(textLine("›", 20f, color = p.muted))

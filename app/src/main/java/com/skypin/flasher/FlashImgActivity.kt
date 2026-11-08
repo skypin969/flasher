@@ -18,7 +18,7 @@ class FlashImgActivity : FlasherBase() {
     @Volatile private var imgName = ""
     @Volatile private var imgSize = 0L
 
-    private lateinit var backBtn: Button
+    private lateinit var backBtn: View
     private lateinit var partitionInput: EditText
     private lateinit var imgInfo: TextView
     private lateinit var formPanel: LinearLayout
@@ -160,9 +160,9 @@ class FlashImgActivity : FlasherBase() {
             setBackgroundColor(p.bg)
         }
 
-        backBtn = btn(tr("← Kembali", "← Back"), BtnStyle.SECONDARY) { finish() }
+        backBtn = backButton { finish() }
         content.addView(backBtn)
-        content.addView(textLine(tr("Flash file img", "Flash img file"), 22f, medium = true).apply {
+        content.addView(textLine(tr("Flash file img", "Flash img file"), 22f, medium = true, color = p.accent).apply {
             setPadding(0, dp(8), 0, 0)
         })
         val tgt = Session.target
@@ -201,7 +201,7 @@ class FlashImgActivity : FlasherBase() {
         imgInfo = textLine(tr("Belum ada file .img dipilih", "No .img file chosen yet"), 13f, color = p.muted, mono = true)
         imgInfo.setPadding(0, dp(8), 0, 0)
         formPanel.addView(imgInfo)
-        formPanel.addView(btn(tr("Flash ke slot aktif", "Flash to active slot"), BtnStyle.PRIMARY) { onFlash() })
+        formPanel.addView(btn(tr("FLASH SLOT AKTIF", "FLASH ACTIVE SLOT"), BtnStyle.PRIMARY) { onFlash() })
         formPanel.addView(textLine(
             tr("Slot aktif akan ditimpa.", "The active slot will be overwritten."),
             12f,
@@ -216,7 +216,7 @@ class FlashImgActivity : FlasherBase() {
         resultSlot = kvRow(resultPanel, tr("Slot aktif", "Active slot"))
         resultFile = kvRow(resultPanel, "File")
         resultPanel.addView(btn(tr("Flash file lain", "Flash another file"), BtnStyle.SECONDARY) { resetForm() })
-        resultPanel.addView(btn(tr("Reboot perangkat", "Reboot device"), BtnStyle.PRIMARY) { onReboot() })
+        resultPanel.addView(btn(tr("REBOOT PERANGKAT", "REBOOT DEVICE"), BtnStyle.PRIMARY) { onReboot() })
         content.addView(resultPanel)
 
         setContentView(page(ScrollView(this).apply { addView(content) }, makeLog()))

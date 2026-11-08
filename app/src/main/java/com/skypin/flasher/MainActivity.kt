@@ -11,7 +11,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
-/** Beranda: setelan bahasa dan mode, data perangkat, Cek HP target, dua menu flash, dan kontak. */
+/** Beranda: setelan bahasa, data perangkat, CEK FASTBOOT, dua menu flash, dan kontak. */
 class MainActivity : FlasherBase() {
 
     private lateinit var statusBadge: TextView
@@ -57,7 +57,7 @@ class MainActivity : FlasherBase() {
     }
 
     private fun onCheckTarget() {
-        runTask(tr("Cek HP target", "Check target phone")) {
+        runTask(tr("CEK FASTBOOT", "CHECK FASTBOOT DEVICE")) {
             val (d, unlocked) = withFastboot { fb -> Pair(readDevice(fb), fb.getvar("unlocked")) }
             if (d.product.isBlank() || d.serial.isBlank()) {
                 Session.target = null
@@ -80,7 +80,7 @@ class MainActivity : FlasherBase() {
 
     private fun openScreen(target: Class<*>) {
         if (Session.target == null) {
-            Toast.makeText(this, tr("Tekan Cek HP target dulu.", "Press Check target phone first."), Toast.LENGTH_LONG).show()
+            Toast.makeText(this, tr("Tekan CEK FASTBOOT dulu.", "Press CHECK FASTBOOT DEVICE first."), Toast.LENGTH_LONG).show()
             return
         }
         startActivity(Intent(this, target))
@@ -108,16 +108,6 @@ class MainActivity : FlasherBase() {
         recreate()
     }
 
-    private fun toggleTheme() {
-        if (busy) {
-            busyToast()
-            return
-        }
-        Session.dark = !Session.dark
-        Session.save(this)
-        recreate()
-    }
-
     /** Pilihan bahasa ID | EN. Yang aktif diberi warna aksen. */
     private fun langSwitch(): LinearLayout {
         val p = pal()
@@ -139,17 +129,6 @@ class MainActivity : FlasherBase() {
         return wrap
     }
 
-    /** Tombol bulan (ke mode gelap) atau matahari (ke mode terang). */
-    private fun themeButton(): TextView {
-        val p = pal()
-        return textLine(if (Session.dark) "☀️" else "🌙", 15f, color = p.text).apply {
-            gravity = Gravity.CENTER
-            background = rounded(p.card, 999, p.border)
-            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginStart = dp(8) }
-            setOnClickListener { toggleTheme() }
-        }
-    }
-
     private fun buildUi() {
         val p = pal()
         val root = LinearLayout(this).apply {
@@ -162,11 +141,10 @@ class MainActivity : FlasherBase() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = lp(bottom = 12)
-            addView(textLine("Flasher", 22f, medium = true).apply {
+            addView(textLine("Flashmate", 22f, medium = true, color = p.accent).apply {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
             addView(langSwitch())
-            addView(themeButton())
         }
         root.addView(header)
 
@@ -182,7 +160,7 @@ class MainActivity : FlasherBase() {
         cardTop.addView(statusBadge)
         card.addView(cardTop)
 
-        infoName = textLine("", 16f, medium = true).apply { setPadding(0, dp(6), 0, 0) }
+        infoName = textLine("", 16f, medium = true, color = p.accent).apply { setPadding(0, dp(6), 0, 0) }
         card.addView(infoName)
         infoDetail = textLine("", 12f, color = p.sec, mono = true)
         card.addView(infoDetail)
@@ -199,7 +177,7 @@ class MainActivity : FlasherBase() {
         card.addView(bootRow)
         root.addView(card)
 
-        root.addView(btn(tr("Cek HP target", "Check target phone"), BtnStyle.PRIMARY) { onCheckTarget() })
+        root.addView(btn(tr("CEK FASTBOOT", "CHECK FASTBOOT DEVICE"), BtnStyle.PRIMARY) { onCheckTarget() })
 
         root.addView(caption(tr("Menu", "Menu")))
         menuImg = rowCard(
@@ -218,7 +196,7 @@ class MainActivity : FlasherBase() {
         root.addView(menuRom)
 
         lockNote = textLine(
-            tr("Tekan Cek HP target dulu sebelum flash.", "Press Check target phone before flashing."),
+            tr("Tekan CEK FASTBOOT dulu sebelum flash.", "Press CHECK FASTBOOT DEVICE before flashing."),
             12f,
             color = p.muted
         )
