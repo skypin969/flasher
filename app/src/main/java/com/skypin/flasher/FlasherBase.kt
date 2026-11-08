@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
@@ -89,7 +88,7 @@ object Fonts {
         }
 }
 
-/** Warna aplikasi: mode gelap dengan latar navy seperti logo. */
+/** Warna aplikasi. Nilainya diambil dari NeonTheme (latar gradasi icon, aksen neon dari √-). */
 class Palette(
     val bg: Int,
     val card: Int,
@@ -113,17 +112,27 @@ class Palette(
     val ghIcon: Int
 )
 
-private fun hex(s: String): Int = Color.parseColor(s)
-
 private val DARK = Palette(
-    bg = hex("#0A0F1A"), card = hex("#0F1A2B"), sub = hex("#13213A"),
-    text = hex("#D6DDE8"), sec = hex("#B8C2D4"), muted = hex("#7D8BA3"),
-    border = hex("#1C2B44"), accent = hex("#3DBB4A"), onAccent = hex("#0A0F1A"),
-    soft = hex("#0F2A1A"), ok = hex("#123A1D"), okText = hex("#3DBB4A"),
-    warnBg = hex("#2E2610"), warnText = hex("#F5CD7A"),
-    danger = hex("#8C1D18"), onDanger = hex("#FFFFFF"),
-    tgSoft = hex("#103447"), tgIcon = hex("#6CCBF5"),
-    ghSoft = hex("#1B2433"), ghIcon = hex("#D6DDE8")
+    bg = NeonTheme.BG_START,
+    card = NeonTheme.CARD,
+    sub = NeonTheme.SUB,
+    text = NeonTheme.TEXT,
+    sec = NeonTheme.SEC,
+    muted = NeonTheme.MUTED,
+    border = NeonTheme.BORDER,
+    accent = NeonTheme.CYAN,
+    onAccent = NeonTheme.ON_ACCENT,
+    soft = NeonTheme.SUB,
+    ok = NeonTheme.SUB,
+    okText = NeonTheme.CYAN,
+    warnBg = NeonTheme.WARN_BG,
+    warnText = NeonTheme.WARN_TEXT,
+    danger = NeonTheme.DANGER,
+    onDanger = NeonTheme.ON_DANGER,
+    tgSoft = NeonTheme.SUB,
+    tgIcon = NeonTheme.MAGENTA,
+    ghSoft = NeonTheme.SUB,
+    ghIcon = NeonTheme.MAGENTA
 )
 
 /** Palet untuk mode yang sedang aktif. */
@@ -172,7 +181,7 @@ class BackArrowDrawable(private val strokePx: Float, arrowColor: Int) : Drawable
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
-/** Gaya tombol: utama, sekunder (garis tepi), dan bahaya. */
+/** Gaya tombol: utama, sekunder, dan bahaya. */
 enum class BtnStyle { PRIMARY, SECONDARY, DANGER }
 
 /** Kerangka bersama: izin USB, tugas latar, log, dan elemen tampilan. */
@@ -468,22 +477,23 @@ abstract class FlasherBase : Activity() {
         val p = pal()
         val fill = when (style) {
             BtnStyle.PRIMARY -> p.accent
-            BtnStyle.SECONDARY -> p.card
+            BtnStyle.SECONDARY -> p.sub
             BtnStyle.DANGER -> p.danger
         }
         val fg = when (style) {
             BtnStyle.PRIMARY -> p.onAccent
-            BtnStyle.SECONDARY -> p.accent
+            BtnStyle.SECONDARY -> p.text
             BtnStyle.DANGER -> p.onDanger
         }
-        val stroke: Int? = if (style == BtnStyle.SECONDARY) p.border else null
+        // Tombol utama memakai gradasi neon, tombol lain warna datar
+        val bgDrawable = if (style == BtnStyle.PRIMARY) neonButtonBackground(this) else rounded(fill, 10, null)
         return Button(this).apply {
             text = label
             setAllCaps(false)
             textSize = 14f
             typeface = if (style == BtnStyle.SECONDARY) Fonts.regular else Fonts.medium
             setTextColor(fg)
-            background = rounded(fill, 10, stroke)
+            background = bgDrawable
             stateListAnimator = null
             minimumHeight = dp(44)
             setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -503,20 +513,20 @@ abstract class FlasherBase : Activity() {
         }
     }
 
-    /** Tombol kembali: panah yang digambar di tengah, lalu tulisan Kembali. */
+    /** Tombol kembali: tanda "<" diikuti tulisan Kembali, tanpa kotak. */
     protected fun backButton(onClick: () -> Unit): LinearLayout {
         val p = pal()
-        val arrow = View(this).apply {
-            background = BackArrowDrawable(2f * resources.displayMetrics.density, p.accent)
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
+        val arrow = textLine("<", 17f, medium = true, color = p.accent).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = dp(8)
+            }
         }
         val label = textLine(tr("Kembali", "Back"), 15f, color = p.accent)
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+            gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(48)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            background = rounded(p.card, 10, p.border)
+            setPadding(dp(4), dp(8), dp(12), dp(8))
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
@@ -557,7 +567,7 @@ abstract class FlasherBase : Activity() {
                 marginStart = dp(10)
             }
         }
-        col.addView(textLine(title, 14f, medium = true, color = p.accent))
+        col.addView(textLine(title, 14f, medium = true, color = p.text))
         col.addView(textLine(sub, 12f, color = p.muted))
         row.addView(col)
         row.addView(textLine("›", 20f, color = p.muted))
@@ -579,10 +589,10 @@ abstract class FlasherBase : Activity() {
         return value
     }
 
-    /** Isi halaman di atas, log di bawah (bisa kosong). */
+    /** Isi halaman di atas, log di bawah (bisa kosong). Latar memakai gradasi icon. */
     protected fun page(top: View, bottom: View?): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setBackgroundColor(pal().bg)
+        background = neonBackground()
         addView(top, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         if (bottom != null) {
             addView(bottom, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
