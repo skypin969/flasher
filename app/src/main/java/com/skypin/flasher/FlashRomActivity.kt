@@ -3,6 +3,7 @@ package com.skypin.flasher
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -171,10 +172,9 @@ class FlashRomActivity : FlasherBase() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(8))
-            setBackgroundColor(p.bg)
         }
         content.addView(backButton { finish() })
-        content.addView(textLine(tr("Flash fastboot ROM tgz", "Flash fastboot ROM tgz"), 22f, medium = true, color = p.accent).apply {
+        content.addView(textLine(tr("Flash fastboot ROM tgz", "Flash fastboot ROM tgz"), 22f, medium = true, color = p.text).apply {
             setPadding(0, dp(8), 0, 0)
         })
         val tgt = Session.target
@@ -213,29 +213,32 @@ class FlashRomActivity : FlasherBase() {
         step2.addView(scriptBtn)
         form.addView(step2)
 
-        form.addView(btn(tr("Buat rencana", "Make plan"), BtnStyle.SECONDARY) { onPlanRom() })
+        form.addView(btn(tr("Buat rencana", "Make plan"), BtnStyle.PRIMARY) { onPlanRom() })
 
+        // Mode uji: kartu sendiri, dengan sakelar ungu
         val modeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(10), 0, 0)
+            background = rounded(p.card, 10, p.border)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            layoutParams = lp(top = 8)
         }
         val modeText = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        modeText.addView(textLine(tr("Mode uji", "Test mode"), 14f, medium = true, color = p.accent))
+        modeText.addView(textLine(tr("Mode uji", "Test mode"), 14f, medium = true, color = p.text))
         modeText.addView(textLine(tr("Tidak mengirim data", "Sends no data"), 12f, color = p.muted))
         modeRow.addView(modeText)
         dryRunSwitch = Switch(this).apply {
             isChecked = true
             trackTintList = ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(p.accent, p.border)
+                intArrayOf(NeonTheme.VIOLET, p.border)
             )
             thumbTintList = ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(p.onAccent, p.muted)
+                intArrayOf(Color.WHITE, p.muted)
             )
         }
         modeRow.addView(dryRunSwitch)
