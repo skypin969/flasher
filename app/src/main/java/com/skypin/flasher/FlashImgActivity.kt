@@ -1,10 +1,12 @@
 package com.skypin.flasher
 
 import android.content.Intent
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
-import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -151,6 +153,29 @@ class FlashImgActivity : FlasherBase() {
         }
     }
 
+    /** Tombol sekunder bergaris neon: isi gelap, garis pinggir dan tulisan bergradasi. */
+    private fun neonOutline(label: String, radiusDp: Int, textSp: Float, padDp: Int, action: () -> Unit): TextView {
+        val p = pal()
+        val outer = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
+        ).apply { cornerRadius = dp(radiusDp).toFloat() }
+        val inner = GradientDrawable().apply {
+            setColor(p.card)
+            cornerRadius = dp(radiusDp - 1).toFloat()
+        }
+        val layers = LayerDrawable(arrayOf(outer, inner)).apply {
+            setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
+        }
+        return textLine(label, textSp, medium = true, color = p.text).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(padDp), dp(10), dp(padDp), dp(10))
+            background = layers
+            setOnClickListener { action() }
+            applyNeonText(this)
+        }
+    }
+
     private fun buildUi() {
         val p = pal()
         val content = LinearLayout(this).apply {
@@ -189,13 +214,21 @@ class FlashImgActivity : FlasherBase() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(8), 0, 0)
         }
-        for (name in listOf("boot", "vendor_boot", "init_boot")) {
-            chips.addView(chip(name) { partitionInput.setText(name) })
+        for ((i, name) in listOf("boot", "vendor_boot", "init_boot").withIndex()) {
+            val chip = neonOutline(name, 20, 13f, 8) { partitionInput.setText(name) }
+            chip.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = if (i > 0) dp(8) else 0
+            }
+            chips.addView(chip)
         }
         formPanel.addView(chips)
 
         formPanel.addView(caption(tr("File .img", ".img file")))
-        formPanel.addView(btn(tr("Pilih file", "Choose file"), BtnStyle.SECONDARY) { pickFile(REQ_PICK_IMG) })
+        val bPick = neonOutline(tr("Pilih file", "Choose file"), 10, 15f, 12) { pickFile(REQ_PICK_IMG) }
+        bPick.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
+        }
+        formPanel.addView(bPick)
         imgInfo = textLine(tr("Belum ada file .img dipilih", "No .img file chosen yet"), 13f, color = p.muted, mono = true)
         imgInfo.setPadding(0, dp(8), 0, 0)
         formPanel.addView(imgInfo)
