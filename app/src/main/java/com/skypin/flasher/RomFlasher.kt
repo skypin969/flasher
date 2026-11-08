@@ -345,7 +345,11 @@ private fun guarded(checked: Boolean, label: String, log: (String) -> Unit, bloc
     }
 }
 
-/** Kirim satu gambar ke partisi [part], dipecah sesuai max-download-size. */
+/**
+ * Kirim satu gambar ke partisi [part].
+ * File biasa (bukan sparse) yang muat dalam max-download-size dikirim apa adanya, seperti MiTool.
+ * Selain itu, gambar dipecah menjadi bagian sparse.
+ */
 fun flashImage(
     fb: Fastboot,
     img: ImageSrc,
@@ -356,6 +360,15 @@ fun flashImage(
 ) {
     if (img.size <= 0L) throw FastbootException("Ukuran file untuk $part tidak terbaca")
     val map = SparseImage.scan(img)
+
+    if (!map.isSparse && img.size <= maxDl) {
+        log("   1 bagian, dikirim apa adanya (${human(img.size)})")
+        if (dry) return
+        img.open().use { ins -> fb.download(img.size, ins) }
+        fb.flash(part)
+        return
+    }
+
     val parts = SparseImage.planParts(map, maxDl)
     log("   ${parts.size} bagian, batas tiap bagian ${human(maxDl)}")
     if (dry) return
