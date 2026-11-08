@@ -136,7 +136,7 @@ class MainActivity : FlasherBase() {
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
 
-        // Header: judul bergradasi neon, pilihan bahasa, dan tombol mode (belum berfungsi)
+        // Header: judul bergradasi neon dan pilihan bahasa
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -148,18 +148,6 @@ class MainActivity : FlasherBase() {
         applyNeonText(title)
         header.addView(title)
         header.addView(langSwitch())
-        val moon = textLine("☾", 14f, color = p.text).apply {
-            gravity = Gravity.CENTER
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = rounded(p.card, 999, p.border)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                marginStart = dp(6)
-            }
-            setOnClickListener {
-                Toast.makeText(this@MainActivity, tr("Mode terang belum tersedia.", "Light mode is not available yet."), Toast.LENGTH_SHORT).show()
-            }
-        }
-        header.addView(moon)
         root.addView(header)
 
         val card = box()
