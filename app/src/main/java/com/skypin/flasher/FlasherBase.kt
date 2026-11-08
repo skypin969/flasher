@@ -7,6 +7,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.hardware.usb.UsbDevice
@@ -16,12 +18,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -30,11 +34,118 @@ const val REQ_PICK_IMG = 1001
 const val REQ_PICK_TREE = 1002
 const val REQ_PICK_TGZ = 1003
 
-/** Data perangkat hasil Cek HP target. Dipakai bersama oleh semua layar dalam satu aplikasi. */
+/** Data bersama: hasil Cek HP target, bahasa, dan mode terang atau gelap. */
 object Session {
     @Volatile var target: DeviceInfo? = null
-    @Volatile var unlocked: String = "belum dicek"
+    /** "yes", "no", "unknown", atau teks mentah dari perangkat. Kosong jika belum dicek. */
+    @Volatile var unlocked: String = ""
+    /** "id" atau "en". */
+    @Volatile var lang: String = "id"
+    @Volatile var dark: Boolean = false
+    private var loaded = false
+
+    /** Membaca setelan tersimpan. Jika belum ada, bahasa mengikuti HP dan mode mengikuti sistem. */
+    @Synchronized
+    fun load(ctx: Context) {
+        if (loaded) return
+        val p = ctx.getSharedPreferences("flasher", Context.MODE_PRIVATE)
+        val sysLang = Locale.getDefault().language
+        lang = p.getString("lang", null) ?: if (sysLang == "in" || sysLang == "id") "id" else "en"
+        dark = if (p.contains("dark")) {
+            p.getBoolean("dark", false)
+        } else {
+            (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+        }
+        loaded = true
+    }
+
+    fun save(ctx: Context) {
+        ctx.getSharedPreferences("flasher", Context.MODE_PRIVATE).edit()
+            .putString("lang", lang)
+            .putBoolean("dark", dark)
+            .apply()
+    }
 }
+
+/** Font Space Grotesk dan JetBrains Mono dari assets/fonts. Jika file belum ada, pakai font bawaan HP. */
+object Fonts {
+    lateinit var regular: Typeface
+    lateinit var medium: Typeface
+    lateinit var mono: Typeface
+    private var loaded = false
+
+    @Synchronized
+    fun load(ctx: Context) {
+        if (loaded) return
+        regular = fromAsset(ctx, "fonts/space_grotesk_regular.ttf") ?: Typeface.SANS_SERIF
+        medium = fromAsset(ctx, "fonts/space_grotesk_medium.ttf")
+            ?: Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        mono = fromAsset(ctx, "fonts/jetbrains_mono_regular.ttf") ?: Typeface.MONOSPACE
+        loaded = true
+    }
+
+    private fun fromAsset(ctx: Context, path: String): Typeface? =
+        try {
+            Typeface.createFromAsset(ctx.assets, path)
+        } catch (e: Exception) {
+            null
+        }
+}
+
+/** Warna untuk satu mode (terang atau gelap). */
+class Palette(
+    val bg: Int,
+    val card: Int,
+    val sub: Int,
+    val text: Int,
+    val sec: Int,
+    val muted: Int,
+    val border: Int,
+    val accent: Int,
+    val onAccent: Int,
+    val soft: Int,
+    val ok: Int,
+    val okText: Int,
+    val warnBg: Int,
+    val warnText: Int,
+    val danger: Int,
+    val onDanger: Int,
+    val tgSoft: Int,
+    val tgIcon: Int,
+    val ghSoft: Int,
+    val ghIcon: Int
+)
+
+private fun hex(s: String): Int = Color.parseColor(s)
+
+private val LIGHT = Palette(
+    bg = hex("#F6F5F2"), card = hex("#FFFFFF"), sub = hex("#F1EFEA"),
+    text = hex("#1A1A1A"), sec = hex("#4A4A4A"), muted = hex("#6B6B6B"),
+    border = hex("#DDDAD3"), accent = hex("#2F5BEA"), onAccent = hex("#FFFFFF"),
+    soft = hex("#E4EBFD"), ok = hex("#E3F4E8"), okText = hex("#1E7A3C"),
+    warnBg = hex("#FFF4DE"), warnText = hex("#8A5A00"),
+    danger = hex("#B3261E"), onDanger = hex("#FFFFFF"),
+    tgSoft = hex("#E3F4FC"), tgIcon = hex("#1E9BD7"),
+    ghSoft = hex("#ECEBEA"), ghIcon = hex("#1A1A1A")
+)
+
+private val DARK = Palette(
+    bg = hex("#121212"), card = hex("#1E1E1E"), sub = hex("#262626"),
+    text = hex("#EDEDED"), sec = hex("#BDBDBD"), muted = hex("#9A9A9A"),
+    border = hex("#2E2E2E"), accent = hex("#8AB4FF"), onAccent = hex("#0E1A33"),
+    soft = hex("#22304D"), ok = hex("#1B3A26"), okText = hex("#8FDCA6"),
+    warnBg = hex("#3A2E12"), warnText = hex("#F5CD7A"),
+    danger = hex("#8C1D18"), onDanger = hex("#FFFFFF"),
+    tgSoft = hex("#103447"), tgIcon = hex("#6CCBF5"),
+    ghSoft = hex("#2A2A2A"), ghIcon = hex("#EDEDED")
+)
+
+/** Palet untuk mode yang sedang aktif. */
+fun pal(): Palette = if (Session.dark) DARK else LIGHT
+
+/** Teks Indonesia atau Inggris, mengikuti setelan bahasa. */
+fun tr(id: String, en: String): String = if (Session.lang == "en") en else id
 
 private val DEVICE_NAMES = mapOf(
     "spinel" to "Redmi Note 15 4G",
@@ -43,6 +154,9 @@ private val DEVICE_NAMES = mapOf(
 
 /** Nama pasar dari codename. Codename yang belum ada di tabel tampil apa adanya. */
 fun marketName(codename: String): String = DEVICE_NAMES[codename] ?: codename
+
+/** Gaya tombol: utama, sekunder (garis tepi), dan bahaya. */
+enum class BtnStyle { PRIMARY, SECONDARY, DANGER }
 
 /** Kerangka bersama: izin USB, tugas latar, log, dan elemen tampilan. */
 abstract class FlasherBase : Activity() {
@@ -58,12 +172,18 @@ abstract class FlasherBase : Activity() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            log(if (granted) "Izin USB sudah diberikan. Tekan tombol tadi sekali lagi." else "Izin USB ditolak.")
+            log(
+                if (granted) tr("Izin USB sudah diberikan. Tekan tombol tadi sekali lagi.", "USB permission granted. Press the button again.")
+                else tr("Izin USB ditolak.", "USB permission denied.")
+            )
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Session.load(this)
+        Fonts.load(this)
+        applyWindow()
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(permReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -78,17 +198,40 @@ abstract class FlasherBase : Activity() {
         super.onDestroy()
     }
 
-    /** Area log di bagian bawah layar. Halaman tanpa log memakai notifikasi singkat. */
-    protected fun makeLog(): ScrollView {
-        val tv = TextView(this).apply {
-            typeface = Typeface.MONOSPACE
-            textSize = 12f
-            setTextIsSelectable(true)
+    /** Warna bar status dan navigasi mengikuti mode. */
+    protected fun applyWindow() {
+        val p = pal()
+        window.statusBarColor = p.bg
+        window.navigationBarColor = p.bg
+        window.decorView.systemUiVisibility =
+            if (Session.dark) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+    }
+
+    /** Area log di bawah layar. Bisa dibuka dan ditutup. Halaman tanpa log memakai notifikasi singkat. */
+    protected fun makeLog(): LinearLayout {
+        val p = pal()
+        val tv = textLine("", 12f, color = p.text, mono = true).apply { setTextIsSelectable(true) }
+        val sv = ScrollView(this).apply {
+            addView(tv)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(150))
         }
-        val sv = ScrollView(this).apply { addView(tv) }
         logView = tv
         logScroll = sv
-        return sv
+        val title = textLine("Log  ▼", 12f, medium = true, color = p.muted)
+        var open = true
+        title.setOnClickListener {
+            open = !open
+            sv.visibility = if (open) View.VISIBLE else View.GONE
+            title.text = if (open) "Log  ▼" else "Log  ▶"
+        }
+        val section = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(p.card, 12, p.border)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+        }
+        section.addView(title)
+        section.addView(sv)
+        return section
     }
 
     protected fun log(msg: String) {
@@ -110,14 +253,14 @@ abstract class FlasherBase : Activity() {
     protected fun confirm(msg: String, onYes: () -> Unit) {
         AlertDialog.Builder(this)
             .setMessage(msg)
-            .setPositiveButton("Ya") { _, _ -> onYes() }
-            .setNegativeButton("Batal", null)
+            .setPositiveButton(tr("Ya", "Yes")) { _, _ -> onYes() }
+            .setNegativeButton(tr("Batal", "Cancel"), null)
             .show()
     }
 
     protected fun runTask(name: String, task: () -> Unit) {
         if (busy) {
-            log("Masih ada proses berjalan, tunggu sampai selesai.")
+            log(tr("Masih ada proses berjalan, tunggu sampai selesai.", "Another task is still running. Please wait."))
             return
         }
         busy = true
@@ -126,7 +269,7 @@ abstract class FlasherBase : Activity() {
             try {
                 task()
             } catch (e: FastbootException) {
-                log("GAGAL: ${e.message}")
+                log(tr("GAGAL: ", "FAILED: ") + e.message)
             } catch (e: Exception) {
                 log("ERROR: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
@@ -152,7 +295,12 @@ abstract class FlasherBase : Activity() {
     protected fun <T> withFastboot(block: (Fastboot) -> T): T {
         val usb = getSystemService(Context.USB_SERVICE) as UsbManager
         val (dev, iface) = findFastboot(usb)
-            ?: throw FastbootException("Perangkat fastboot tidak ditemukan. Pastikan HP target masuk mode fastboot dan kabel OTG terpasang.")
+            ?: throw FastbootException(
+                tr(
+                    "Perangkat fastboot tidak ditemukan. Pastikan HP target masuk mode fastboot dan kabel OTG terpasang.",
+                    "Fastboot device not found. Make sure the target phone is in fastboot mode and the OTG cable is connected."
+                )
+            )
         if (!usb.hasPermission(dev)) {
             val pi = PendingIntent.getBroadcast(
                 this, 0,
@@ -160,9 +308,14 @@ abstract class FlasherBase : Activity() {
                 PendingIntent.FLAG_MUTABLE
             )
             usb.requestPermission(dev, pi)
-            throw FastbootException("Belum ada izin USB. Setujui izin yang muncul, lalu tekan tombol lagi.")
+            throw FastbootException(
+                tr(
+                    "Belum ada izin USB. Setujui izin yang muncul, lalu tekan tombol lagi.",
+                    "USB permission is not granted yet. Approve the prompt, then press the button again."
+                )
+            )
         }
-        val conn = usb.openDevice(dev) ?: throw FastbootException("Gagal membuka perangkat USB")
+        val conn = usb.openDevice(dev) ?: throw FastbootException(tr("Gagal membuka perangkat USB", "Failed to open USB device"))
         val fb = try {
             Fastboot(conn, iface)
         } catch (e: FastbootException) {
@@ -179,10 +332,15 @@ abstract class FlasherBase : Activity() {
     /** Perangkat yang terhubung harus sama dengan hasil Cek HP target. */
     protected fun ensureSameDevice(now: DeviceInfo, expected: DeviceInfo) {
         if (now.product.isBlank() || now.serial.isBlank()) {
-            throw FastbootException("Codename atau serial tidak terbaca. Flash diblokir.")
+            throw FastbootException(tr("Codename atau serial tidak terbaca. Flash diblokir.", "Codename or serial could not be read. Flashing is blocked."))
         }
         if (now.product != expected.product || now.serial != expected.serial) {
-            throw FastbootException("Perangkat berbeda dari hasil Cek HP target. Flash diblokir. Tekan Cek HP target lagi di halaman utama.")
+            throw FastbootException(
+                tr(
+                    "Perangkat berbeda dari hasil Cek HP target. Flash diblokir. Tekan Cek HP target lagi di halaman utama.",
+                    "The device differs from the Check target phone result. Flashing is blocked. Press Check target phone again on the main page."
+                )
+            )
         }
     }
 
@@ -190,7 +348,12 @@ abstract class FlasherBase : Activity() {
     protected fun requireTarget(): DeviceInfo? {
         val t = Session.target
         if (t == null) {
-            alert("Tekan Cek HP target di halaman utama dulu. Flash diblokir sebelum perangkat dicek.")
+            alert(
+                tr(
+                    "Tekan Cek HP target di halaman utama dulu. Flash diblokir sebelum perangkat dicek.",
+                    "Press Check target phone on the main page first. Flashing is blocked until the device is checked."
+                )
+            )
         }
         return t
     }
@@ -226,10 +389,11 @@ abstract class FlasherBase : Activity() {
         val text = if (n >= 8) String(head, 0, 8, Charsets.US_ASCII) else ""
         return when {
             n >= 4 && head[0] == 0x3A.toByte() && head[1] == 0xFF.toByte() &&
-                head[2] == 0x26.toByte() && head[3] == 0xED.toByte() -> "sparse (format Android)"
+                head[2] == 0x26.toByte() && head[3] == 0xED.toByte() ->
+                tr("sparse (format Android)", "sparse (Android format)")
             text == "ANDROID!" -> "boot image"
             text == "VNDRBOOT" -> "vendor_boot image"
-            else -> "raw / tidak dikenal"
+            else -> tr("raw / tidak dikenal", "raw / unknown")
         }
     }
 
@@ -237,45 +401,152 @@ abstract class FlasherBase : Activity() {
 
     protected fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    /** Kotak dengan garis tepi tipis dan sudut membulat. Warna teks mengikuti tema HP. */
+    protected fun rounded(fill: Int, radiusDp: Int, stroke: Int?): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(radiusDp).toFloat()
+            if (stroke != null) setStroke(dp(1), stroke)
+        }
+
+    /** Margin standar untuk elemen di dalam kolom vertikal. */
+    protected fun lp(top: Int = 0, bottom: Int = 0): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(top)
+            bottomMargin = dp(bottom)
+        }
+
+    /** Kartu utama dengan sudut membulat. */
     protected fun box(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(14), dp(12), dp(14), dp(12))
-        background = GradientDrawable().apply {
-            cornerRadius = dp(12).toFloat()
-            setStroke(dp(1), 0x33888888)
-        }
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { bottomMargin = dp(10) }
+        background = rounded(pal().card, 14, pal().border)
+        layoutParams = lp(bottom = 10)
     }
 
-    protected fun textLine(s: String = "", size: Float = 16f): TextView = TextView(this).apply {
+    /** Kartu kecil di dalam kartu utama. */
+    protected fun subCard(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(10), dp(8), dp(10), dp(10))
+        background = rounded(pal().sub, 12, null)
+        layoutParams = lp(top = 6)
+    }
+
+    protected fun textLine(
+        s: String = "",
+        size: Float = 15f,
+        medium: Boolean = false,
+        color: Int = pal().text,
+        mono: Boolean = false
+    ): TextView = TextView(this).apply {
         text = s
         textSize = size
+        setTextColor(color)
+        typeface = if (mono) Fonts.mono else if (medium) Fonts.medium else Fonts.regular
     }
 
-    protected fun caption(s: String): TextView = TextView(this).apply {
-        text = s
-        textSize = 13f
-        alpha = 0.7f
-        setPadding(0, dp(6), 0, 0)
+    protected fun caption(s: String): TextView = textLine(s, 12f, color = pal().muted).apply {
+        setPadding(0, dp(8), 0, dp(2))
     }
 
-    protected fun btn(label: String, onClick: () -> Unit): Button = Button(this).apply {
-        text = label
+    protected fun btn(label: String, style: BtnStyle = BtnStyle.PRIMARY, onClick: () -> Unit): Button {
+        val p = pal()
+        val fill = when (style) {
+            BtnStyle.PRIMARY -> p.accent
+            BtnStyle.SECONDARY -> p.card
+            BtnStyle.DANGER -> p.danger
+        }
+        val fg = when (style) {
+            BtnStyle.PRIMARY -> p.onAccent
+            BtnStyle.SECONDARY -> p.text
+            BtnStyle.DANGER -> p.onDanger
+        }
+        val stroke: Int? = if (style == BtnStyle.SECONDARY) p.border else null
+        return Button(this).apply {
+            text = label
+            setAllCaps(false)
+            textSize = 14f
+            typeface = if (style == BtnStyle.SECONDARY) Fonts.regular else Fonts.medium
+            setTextColor(fg)
+            background = rounded(fill, 10, stroke)
+            stateListAnimator = null
+            minimumHeight = dp(44)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setOnClickListener { onClick() }
+            layoutParams = lp(top = 8)
+        }
+    }
+
+    /** Tombol kecil berbentuk kapsul, untuk pilihan cepat nama partisi. */
+    protected fun chip(label: String, onClick: () -> Unit): TextView = textLine(label, 13f).apply {
+        gravity = Gravity.CENTER
+        setPadding(dp(6), dp(8), dp(6), dp(8))
+        background = rounded(pal().sub, 999, pal().border)
         setOnClickListener { onClick() }
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(6) }
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(6)
+        }
     }
 
-    /** Bagian atas untuk isi halaman, bagian bawah untuk log. */
-    protected fun splitScreen(top: View, bottom: View): LinearLayout = LinearLayout(this).apply {
+    /** Baris dengan lencana, judul, keterangan, dan panah. Dipakai untuk menu dan kontak. */
+    protected fun rowCard(
+        badge: String,
+        title: String,
+        sub: String,
+        badgeFill: Int,
+        badgeText: Int,
+        onClick: () -> Unit
+    ): LinearLayout {
+        val p = pal()
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = rounded(p.card, 12, p.border)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+            layoutParams = lp(bottom = 8)
+        }
+        row.addView(textLine(badge, 11f, medium = true, color = badgeText).apply {
+            gravity = Gravity.CENTER
+            background = rounded(badgeFill, 8, null)
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(32))
+        })
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(10)
+            }
+        }
+        col.addView(textLine(title, 14f, medium = true))
+        col.addView(textLine(sub, 12f, color = p.muted))
+        row.addView(col)
+        row.addView(textLine("›", 20f, color = p.muted))
+        return row
+    }
+
+    /** Baris label dan nilai di dalam [parent]. Mengembalikan TextView nilainya. */
+    protected fun kvRow(parent: LinearLayout, label: String): TextView {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        row.addView(textLine(label, 13f, color = pal().muted).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        val value = textLine("", 13f, medium = true, mono = true)
+        row.addView(value)
+        parent.addView(row)
+        return value
+    }
+
+    /** Isi halaman di atas, log di bawah (bisa kosong). */
+    protected fun page(top: View, bottom: View?): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        addView(top, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 3f))
-        addView(bottom, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 2f))
+        setBackgroundColor(pal().bg)
+        addView(top, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        if (bottom != null) {
+            addView(bottom, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
     }
 }
