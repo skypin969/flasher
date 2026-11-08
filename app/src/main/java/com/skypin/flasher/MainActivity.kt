@@ -11,7 +11,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
-/** Beranda: setelan bahasa, data perangkat, CEK FASTBOOT, dua menu flash, dan kontak. */
+/** Beranda: setelan bahasa, data perangkat, CEK FASTBOOT, menu flash dan ADB sideload, dan kontak. */
 class MainActivity : FlasherBase() {
 
     private lateinit var statusBadge: TextView
@@ -108,7 +108,7 @@ class MainActivity : FlasherBase() {
         recreate()
     }
 
-    /** Pilihan bahasa ID | EN. Yang aktif diberi warna aksen. */
+    /** Pilihan bahasa ID | EN. Yang aktif diberi gradasi neon. */
     private fun langSwitch(): LinearLayout {
         val p = pal()
         val wrap = LinearLayout(this).apply {
@@ -121,7 +121,7 @@ class MainActivity : FlasherBase() {
             val seg = textLine(code.uppercase(), 12f, medium = true, color = if (on) p.onAccent else p.muted, mono = true).apply {
                 gravity = Gravity.CENTER
                 setPadding(dp(10), dp(4), dp(10), dp(4))
-                background = if (on) rounded(p.accent, 999, null) else null
+                background = if (on) neonButtonBackground(this@MainActivity, 999) else null
                 setOnClickListener { changeLang(code) }
             }
             wrap.addView(seg)
@@ -134,18 +134,32 @@ class MainActivity : FlasherBase() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
-            setBackgroundColor(p.bg)
         }
 
+        // Header: judul bergradasi neon, pilihan bahasa, dan tombol mode (belum berfungsi)
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = lp(bottom = 12)
-            addView(textLine("Flashmate", 22f, medium = true, color = p.accent).apply {
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(langSwitch())
         }
+        val title = textLine("√- Flashmate", 22f, medium = true, color = p.text).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        applyNeonText(title)
+        header.addView(title)
+        header.addView(langSwitch())
+        val moon = textLine("☾", 14f, color = p.text).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = rounded(p.card, 999, p.border)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = dp(6)
+            }
+            setOnClickListener {
+                Toast.makeText(this@MainActivity, tr("Mode terang belum tersedia.", "Light mode is not available yet."), Toast.LENGTH_SHORT).show()
+            }
+        }
+        header.addView(moon)
         root.addView(header)
 
         val card = box()
@@ -160,7 +174,7 @@ class MainActivity : FlasherBase() {
         cardTop.addView(statusBadge)
         card.addView(cardTop)
 
-        infoName = textLine("", 16f, medium = true, color = p.accent).apply { setPadding(0, dp(6), 0, 0) }
+        infoName = textLine("", 16f, medium = true, color = p.text).apply { setPadding(0, dp(6), 0, 0) }
         card.addView(infoName)
         infoDetail = textLine("", 12f, color = p.sec, mono = true)
         card.addView(infoDetail)
@@ -179,21 +193,31 @@ class MainActivity : FlasherBase() {
 
         root.addView(btn(tr("CEK FASTBOOT", "CHECK FASTBOOT DEVICE"), BtnStyle.PRIMARY) { onCheckTarget() })
 
-        root.addView(caption(tr("Menu", "Menu")))
+        root.addView(caption(tr("Menu", "Menu")).apply { setTextColor(NeonTheme.MAGENTA) })
         menuImg = rowCard(
             "IMG",
             tr("Flash file img", "Flash img file"),
             tr("Satu file ke slot aktif", "One file to the active slot"),
-            p.soft, p.accent
+            p.soft, NeonTheme.MAGENTA
         ) { openScreen(FlashImgActivity::class.java) }
         root.addView(menuImg)
         menuRom = rowCard(
             "ROM",
             tr("Flash fastboot ROM tgz", "Flash fastboot ROM tgz"),
             tr("ROM lengkap dari folder atau .tgz", "Full ROM from a folder or .tgz"),
-            p.soft, p.accent
+            p.soft, NeonTheme.MAGENTA
         ) { openScreen(FlashRomActivity::class.java) }
         root.addView(menuRom)
+        // ADB sideload: hanya tampilan dulu, fiturnya belum dikerjakan
+        val menuSdl = rowCard(
+            "SDL",
+            tr("ADB sideload", "ADB sideload"),
+            tr("Kirim file ZIP dari recovery", "Send a ZIP file from recovery"),
+            p.soft, NeonTheme.MAGENTA
+        ) {
+            Toast.makeText(this, tr("Segera hadir", "Coming soon"), Toast.LENGTH_SHORT).show()
+        }
+        root.addView(menuSdl)
 
         lockNote = textLine(
             tr("Tekan CEK FASTBOOT dulu sebelum flash.", "Press CHECK FASTBOOT DEVICE before flashing."),
@@ -202,7 +226,7 @@ class MainActivity : FlasherBase() {
         )
         root.addView(lockNote)
 
-        root.addView(caption(tr("Kontak", "Contact")))
+        root.addView(caption(tr("Kontak", "Contact")).apply { setTextColor(NeonTheme.MAGENTA) })
         root.addView(rowCard("TG", "Telegram", "@Skypin969", p.tgSoft, p.tgIcon) {
             openUrl("https://t.me/Skypin969")
         })
@@ -211,7 +235,7 @@ class MainActivity : FlasherBase() {
         })
 
         setContentView(ScrollView(this).apply {
-            setBackgroundColor(p.bg)
+            background = neonBackground()
             addView(root)
         })
     }
