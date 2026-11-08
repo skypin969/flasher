@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
-        android:label="Flasher"
+        android:label="Flashmate"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
