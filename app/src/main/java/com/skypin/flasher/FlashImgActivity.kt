@@ -141,7 +141,7 @@ class FlashImgActivity : FlasherBase() {
         imgUri = null
         imgName = ""
         imgSize = 0L
-        imgInfo.text = tr("Belum ada file .img dipilih", "No .img file chosen yet")
+        imgInfo.text = tr("belum ada file .img yang di pilih", "no .img file chosen yet")
         resultPanel.visibility = View.GONE
         formPanel.visibility = View.VISIBLE
     }
@@ -185,7 +185,7 @@ class FlashImgActivity : FlasherBase() {
 
         backBtn = backButton { finish() }
         content.addView(backBtn)
-        content.addView(textLine(tr("Flash file img", "Flash img file"), 22f, medium = true, color = p.text).apply {
+        content.addView(textLine(tr("FLASH FILE IMG", "FLASH IMG FILE"), 22f, medium = true, color = p.text).apply {
             setPadding(0, dp(8), 0, 0)
         })
         val tgt = Session.target
@@ -197,7 +197,7 @@ class FlashImgActivity : FlasherBase() {
         )
 
         formPanel = box()
-        formPanel.addView(caption(tr("Nama partisi", "Partition name")))
+        formPanel.addView(caption(tr("nama partisi", "partition name")))
         partitionInput = EditText(this).apply {
             hint = tr("contoh: boot, vendor_boot, atau init_boot", "example: boot, vendor_boot, or init_boot")
             setHintTextColor(p.muted)
@@ -223,18 +223,18 @@ class FlashImgActivity : FlasherBase() {
         }
         formPanel.addView(chips)
 
-        formPanel.addView(caption(tr("File .img", ".img file")))
-        val bPick = neonOutline(tr("Pilih file", "Choose file"), 10, 15f, 12) { pickFile(REQ_PICK_IMG) }
+        formPanel.addView(caption(tr("file .img", ".img file")))
+        val bPick = neonOutline(tr("PILIH FILE", "CHOOSE FILE"), 10, 15f, 12) { pickFile(REQ_PICK_IMG) }
         bPick.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(8)
         }
         formPanel.addView(bPick)
-        imgInfo = textLine(tr("Belum ada file .img dipilih", "No .img file chosen yet"), 13f, color = p.muted, mono = true)
+        imgInfo = textLine(tr("belum ada file .img yang di pilih", "no .img file chosen yet"), 13f, color = p.muted, mono = true)
         imgInfo.setPadding(0, dp(8), 0, 0)
         formPanel.addView(imgInfo)
         formPanel.addView(btn(tr("FLASH SLOT AKTIF", "FLASH ACTIVE SLOT"), BtnStyle.PRIMARY) { onFlash() })
         formPanel.addView(textLine(
-            tr("Slot aktif akan ditimpa.", "The active slot will be overwritten."),
+            tr("slot aktif akan di timpa.", "the active slot will be overwritten."),
             12f,
             color = p.warnText
         ).apply { setPadding(0, dp(8), 0, 0) })
@@ -242,10 +242,10 @@ class FlashImgActivity : FlasherBase() {
 
         resultPanel = box()
         resultPanel.visibility = View.GONE
-        resultPanel.addView(textLine(tr("✓ Flash berhasil", "✓ Flash successful"), 16f, medium = true, color = p.okText))
-        resultPart = kvRow(resultPanel, tr("Partisi", "Partition"))
-        resultSlot = kvRow(resultPanel, tr("Slot aktif", "Active slot"))
-        resultFile = kvRow(resultPanel, "File")
+        resultPanel.addView(textLine(tr("Flash Berhasil", "Flash Successful"), 16f, medium = true, color = p.okText))
+        resultPart = kvRow(resultPanel, tr("partisi", "partition"))
+        resultSlot = kvRow(resultPanel, tr("slot aktif", "active slot"))
+        resultFile = kvRow(resultPanel, "file")
         resultPanel.addView(btn(tr("FLASH FILE LAIN", "FLASH ANOTHER FILE"), BtnStyle.PRIMARY) { resetForm() })
         resultPanel.addView(btn(tr("REBOOT PERANGKAT", "REBOOT DEVICE"), BtnStyle.PRIMARY) { onReboot() })
         content.addView(resultPanel)
