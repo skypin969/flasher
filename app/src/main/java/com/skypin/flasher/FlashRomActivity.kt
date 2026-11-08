@@ -4,10 +4,11 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -25,7 +26,7 @@ class FlashRomActivity : FlasherBase() {
     @Volatile private var plan: RomPlan? = null
 
     private lateinit var romInfo: TextView
-    private lateinit var scriptBtn: Button
+    private lateinit var scriptBtn: TextView
     private lateinit var dryRunSwitch: Switch
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,6 +86,7 @@ class FlashRomActivity : FlasherBase() {
         runOnUiThread {
             romInfo.text = msg
             scriptBtn.text = tr("Pilih script", "Choose script")
+            applyNeonText(scriptBtn)
         }
         log(msg.replace("\n", " | "))
     }
@@ -102,6 +104,7 @@ class FlashRomActivity : FlasherBase() {
                 romScript = scripts[which]
                 plan = null
                 scriptBtn.text = scripts[which]
+                applyNeonText(scriptBtn)
                 romInfo.text = tr("Paket: $romName\nScript: ${scripts[which]}\nTekan Buat rencana.",
                     "Package: $romName\nScript: ${scripts[which]}\nPress Make plan.")
             }
@@ -167,6 +170,29 @@ class FlashRomActivity : FlasherBase() {
         }
     }
 
+    /** Tombol sekunder: isi gelap, garis pinggir dan tulisan bergradasi neon. */
+    private fun neonOutline(label: String, action: () -> Unit): TextView {
+        val p = pal()
+        val outer = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
+        ).apply { cornerRadius = dp(10).toFloat() }
+        val inner = GradientDrawable().apply {
+            setColor(p.card)
+            cornerRadius = dp(9).toFloat()
+        }
+        val layers = LayerDrawable(arrayOf(outer, inner)).apply {
+            setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
+        }
+        return textLine(label, 15f, medium = true, color = p.text).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = layers
+            setOnClickListener { action() }
+            applyNeonText(this)
+        }
+    }
+
     private fun buildUi() {
         val p = pal()
         val content = LinearLayout(this).apply {
@@ -190,8 +216,8 @@ class FlashRomActivity : FlasherBase() {
         val step1 = subCard()
         step1.addView(caption(tr("1. Paket ROM", "1. ROM package")))
         val pickRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val bFolder = btn(tr("Folder", "Folder"), BtnStyle.SECONDARY) { pickRomFolder() }
-        val bTgz = btn(tr("File .tgz", ".tgz file"), BtnStyle.SECONDARY) { pickFile(REQ_PICK_TGZ) }
+        val bFolder = neonOutline(tr("Folder", "Folder")) { pickRomFolder() }
+        val bTgz = neonOutline(tr("File .tgz", ".tgz file")) { pickFile(REQ_PICK_TGZ) }
         bFolder.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
             topMargin = dp(8)
             marginEnd = dp(6)
@@ -209,7 +235,10 @@ class FlashRomActivity : FlasherBase() {
 
         val step2 = subCard()
         step2.addView(caption(tr("2. Script", "2. Script")))
-        scriptBtn = btn(tr("Pilih script", "Choose script"), BtnStyle.SECONDARY) { pickScript() }
+        scriptBtn = neonOutline(tr("Pilih script", "Choose script")) { pickScript() }
+        scriptBtn.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
+        }
         step2.addView(scriptBtn)
         form.addView(step2)
 
