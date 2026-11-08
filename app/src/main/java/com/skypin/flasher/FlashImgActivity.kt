@@ -11,7 +11,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.io.IOException
 
-/** Halaman Flash file img: pilih file, tulis ke slot aktif, lalu tampil hasil dengan tombol reboot. */
+/** Halaman Flash file img: pilih file, tulis ke slot aktif, lalu tampil hasil dengan tombol flash file lain dan reboot. */
 class FlashImgActivity : FlasherBase() {
 
     @Volatile private var imgUri: Uri? = null
@@ -124,11 +124,11 @@ class FlashImgActivity : FlasherBase() {
         runOnUiThread { showResult(part, slot) }
     }
 
+    /** Setelah flash selesai: form disembunyikan, hasil dan tombol lanjutan ditampilkan. Tanda Kembali tetap terlihat. */
     private fun showResult(part: String, slot: String) {
         resultPart.text = part
         resultSlot.text = slot.ifEmpty { "-" }
         resultFile.text = imgName
-        backBtn.visibility = View.GONE
         formPanel.visibility = View.GONE
         resultPanel.visibility = View.VISIBLE
     }
@@ -142,7 +142,6 @@ class FlashImgActivity : FlasherBase() {
         imgInfo.text = tr("Belum ada file .img dipilih", "No .img file chosen yet")
         resultPanel.visibility = View.GONE
         formPanel.visibility = View.VISIBLE
-        backBtn.visibility = View.VISIBLE
     }
 
     private fun onReboot() {
@@ -157,12 +156,11 @@ class FlashImgActivity : FlasherBase() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(8))
-            setBackgroundColor(p.bg)
         }
 
         backBtn = backButton { finish() }
         content.addView(backBtn)
-        content.addView(textLine(tr("Flash file img", "Flash img file"), 22f, medium = true, color = p.accent).apply {
+        content.addView(textLine(tr("Flash file img", "Flash img file"), 22f, medium = true, color = p.text).apply {
             setPadding(0, dp(8), 0, 0)
         })
         val tgt = Session.target
@@ -215,7 +213,7 @@ class FlashImgActivity : FlasherBase() {
         resultPart = kvRow(resultPanel, tr("Partisi", "Partition"))
         resultSlot = kvRow(resultPanel, tr("Slot aktif", "Active slot"))
         resultFile = kvRow(resultPanel, "File")
-        resultPanel.addView(btn(tr("Flash file lain", "Flash another file"), BtnStyle.SECONDARY) { resetForm() })
+        resultPanel.addView(btn(tr("FLASH FILE LAIN", "FLASH ANOTHER FILE"), BtnStyle.PRIMARY) { resetForm() })
         resultPanel.addView(btn(tr("REBOOT PERANGKAT", "REBOOT DEVICE"), BtnStyle.PRIMARY) { onReboot() })
         content.addView(resultPanel)
 
