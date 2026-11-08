@@ -1,14 +1,17 @@
 package com.skypin.flasher
 
-import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -31,6 +34,7 @@ class FlashRomActivity : FlasherBase() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         buildUi()
     }
 
@@ -91,6 +95,7 @@ class FlashRomActivity : FlasherBase() {
         log(msg.replace("\n", " | "))
     }
 
+    /** Dialog pilih script: latar gelap, garis gradasi neon, pilihan tulisan putih. */
     private fun pickScript() {
         val scripts = romScripts
         if (scripts.isEmpty()) {
@@ -98,17 +103,40 @@ class FlashRomActivity : FlasherBase() {
                 "No ROM package yet, or the package has no flash script."))
             return
         }
-        AlertDialog.Builder(this)
-            .setTitle(tr("Pilih script", "Choose script"))
-            .setItems(scripts.toTypedArray<CharSequence>()) { _, which ->
-                romScript = scripts[which]
-                plan = null
-                scriptBtn.text = scripts[which]
-                applyNeonText(scriptBtn)
-                romInfo.text = tr("Paket: $romName\nScript: ${scripts[which]}\nTekan Buat rencana.",
-                    "Package: $romName\nScript: ${scripts[which]}\nPress Make plan.")
-            }
-            .show()
+        val p = pal()
+        val width = (resources.displayMetrics.widthPixels * 0.85f).toInt()
+        val picker = Dialog(this)
+        picker.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        picker.window?.setDimAmount(0.6f)
+        picker.window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = neonFrame(p.card, 14)
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+        }
+        panel.addView(textLine(tr("PILIH SCRIPT", "CHOOSE SCRIPT"), 16f, medium = true, color = p.text))
+        for (s in scripts) {
+            panel.addView(textLine(s, 14f, color = Color.WHITE).apply {
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                background = neonFrame(p.card, 10)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(16) }
+                setOnClickListener {
+                    picker.dismiss()
+                    romScript = s
+                    plan = null
+                    scriptBtn.text = s
+                    applyNeonText(scriptBtn)
+                    romInfo.text = tr("Paket: $romName\nScript: $s\nTekan Buat rencana.",
+                        "Package: $romName\nScript: $s\nPress Make plan.")
+                }
+            })
+        }
+        picker.setContentView(panel)
+        picker.show()
     }
 
     private fun onPlanRom() {
@@ -170,26 +198,73 @@ class FlashRomActivity : FlasherBase() {
         }
     }
 
-    /** Tombol sekunder: isi gelap, garis pinggir dan tulisan bergradasi neon. */
-    private fun neonOutline(label: String, action: () -> Unit): TextView {
-        val p = pal()
+    /** Garis pinggir gradasi neon dengan isi gelap di dalamnya. */
+    private fun neonFrame(fill: Int, radiusDp: Int): LayerDrawable {
         val outer = GradientDrawable(
             GradientDrawable.Orientation.LEFT_RIGHT,
             intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
-        ).apply { cornerRadius = dp(10).toFloat() }
+        ).apply { cornerRadius = dp(radiusDp).toFloat() }
         val inner = GradientDrawable().apply {
-            setColor(p.card)
-            cornerRadius = dp(9).toFloat()
+            setColor(fill)
+            cornerRadius = dp(radiusDp - 2).toFloat()
         }
-        val layers = LayerDrawable(arrayOf(outer, inner)).apply {
+        return LayerDrawable(arrayOf(outer, inner)).apply {
             setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
         }
+    }
+
+    /** Tombol sekunder: isi gelap, garis pinggir dan tulisan bergradasi neon. */
+    private fun neonOutline(label: String, action: () -> Unit): TextView {
+        val p = pal()
         return textLine(label, 15f, medium = true, color = p.text).apply {
             gravity = Gravity.CENTER
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = layers
+            background = neonFrame(p.card, 10)
             setOnClickListener { action() }
             applyNeonText(this)
+        }
+    }
+
+    /** Saklar Mode uji: aktif terisi gradasi, tidak aktif garis gradasi dengan isi gelap. */
+    private fun neonToggleTrack(): StateListDrawable {
+        val p = pal()
+        val gradient = intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
+        val on = InsetDrawable(
+            GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, gradient).apply {
+                cornerRadius = dp(12).toFloat()
+                setSize(dp(46), dp(24))
+            },
+            dp(3)
+        )
+        val offOuter = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, gradient).apply {
+            cornerRadius = dp(12).toFloat()
+            setSize(dp(46), dp(24))
+        }
+        val offInner = GradientDrawable().apply {
+            setColor(p.card)
+            cornerRadius = dp(10).toFloat()
+        }
+        val off = InsetDrawable(
+            LayerDrawable(arrayOf(offOuter, offInner)).apply {
+                setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
+            },
+            dp(3)
+        )
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_checked), on)
+            addState(intArrayOf(), off)
+        }
+    }
+
+    private fun neonToggleThumb(): StateListDrawable {
+        fun dot(color: Int) = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+            setSize(dp(24), dp(24))
+        }
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_checked), dot(Color.WHITE))
+            addState(intArrayOf(), dot(NeonTheme.MUTED))
         }
     }
 
@@ -200,7 +275,7 @@ class FlashRomActivity : FlasherBase() {
             setPadding(dp(16), dp(16), dp(16), dp(8))
         }
         content.addView(backButton { finish() })
-        content.addView(textLine(tr("Flash fastboot ROM tgz", "Flash fastboot ROM tgz"), 22f, medium = true, color = p.text).apply {
+        content.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true, color = p.text).apply {
             setPadding(0, dp(8), 0, 0)
         })
         val tgt = Session.target
@@ -214,37 +289,38 @@ class FlashRomActivity : FlasherBase() {
         val form = box()
 
         val step1 = subCard()
-        step1.addView(caption(tr("1. Paket ROM", "1. ROM package")))
-        val pickRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val bFolder = neonOutline(tr("Folder", "Folder")) { pickRomFolder() }
-        val bTgz = neonOutline(tr("File .tgz", ".tgz file")) { pickFile(REQ_PICK_TGZ) }
-        bFolder.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            topMargin = dp(8)
-            marginEnd = dp(6)
-        }
-        bTgz.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            topMargin = dp(8)
-        }
-        pickRow.addView(bFolder)
-        pickRow.addView(bTgz)
-        step1.addView(pickRow)
+        step1.addView(caption(tr("Sebelum pilih folder, ekstrak dulu file fastboot.tgz",
+            "Before choosing a folder, extract fastboot.tgz first")))
+        val bFolder = neonOutline(tr("PILIH FOLDER", "CHOOSE FOLDER")) { pickRomFolder() }
+        bFolder.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(8) }
+        step1.addView(bFolder)
         romInfo = textLine(tr("Belum ada paket ROM dipilih", "No ROM package chosen yet"), 12f, color = p.muted, mono = true)
         romInfo.setPadding(0, dp(8), 0, 0)
         step1.addView(romInfo)
         form.addView(step1)
 
         val step2 = subCard()
-        step2.addView(caption(tr("2. Script", "2. Script")))
+        step2.addView(textLine(tr("PILIH SCRIPT FLASH", "CHOOSE FLASH SCRIPT"), 12f, medium = true, color = Color.WHITE).apply {
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        })
         scriptBtn = neonOutline(tr("Pilih script", "Choose script")) { pickScript() }
-        scriptBtn.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(8)
-        }
+        scriptBtn.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(8) }
         step2.addView(scriptBtn)
         form.addView(step2)
 
-        form.addView(btn(tr("Buat rencana", "Make plan"), BtnStyle.PRIMARY) { onPlanRom() })
+        form.addView(btn(tr("BUAT RENCANA", "MAKE PLAN"), BtnStyle.PRIMARY) { onPlanRom() })
 
-        // Mode uji: kartu sendiri, dengan sakelar ungu
+        // Mode uji: kartu sendiri, dengan saklar gradasi
         val modeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -256,19 +332,13 @@ class FlashRomActivity : FlasherBase() {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        modeText.addView(textLine(tr("Mode uji", "Test mode"), 14f, medium = true, color = p.text))
-        modeText.addView(textLine(tr("Tidak mengirim data", "Sends no data"), 12f, color = p.muted))
+        modeText.addView(textLine(tr("Mode Uji", "Test Mode"), 14f, medium = true, color = p.text))
+        modeText.addView(textLine(tr("tidak mengirim data", "sends no data"), 12f, color = p.muted))
         modeRow.addView(modeText)
         dryRunSwitch = Switch(this).apply {
             isChecked = true
-            trackTintList = ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(NeonTheme.VIOLET, p.border)
-            )
-            thumbTintList = ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(Color.WHITE, p.muted)
-            )
+            setTrackDrawable(neonToggleTrack())
+            setThumbDrawable(neonToggleThumb())
         }
         modeRow.addView(dryRunSwitch)
         form.addView(modeRow)
@@ -276,8 +346,8 @@ class FlashRomActivity : FlasherBase() {
         val warn = box()
         warn.background = rounded(p.warnBg, 10, null)
         warn.addView(textLine(
-            tr("Flash asli akan menghapus semua data dan menimpa semua partisi yang sudah di ubah.",
-                "Real flash will erase all data and overwrite every changed partition."),
+            tr("Saat proses flashing ROM berjalan, layar tidak boleh sampai mati atau mengunci layar.",
+                "While ROM flashing is running, the screen must not turn off or lock."),
             12f,
             color = p.warnText
         ))
