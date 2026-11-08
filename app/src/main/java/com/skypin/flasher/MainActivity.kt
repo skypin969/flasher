@@ -2,6 +2,8 @@ package com.skypin.flasher
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -37,10 +39,10 @@ class MainActivity : FlasherBase() {
         val t = Session.target
         val ok = t != null
         val p = pal()
-        statusBadge.text = if (ok) tr("Sudah dicek", "Checked") else tr("Belum dicek", "Not checked")
+        statusBadge.text = if (ok) tr("Selesai", "Done") else tr("Belum Dicek", "Not checked")
         statusBadge.setTextColor(if (ok) p.okText else p.muted)
         statusBadge.background = rounded(if (ok) p.ok else p.sub, 999, null)
-        infoName.text = if (t != null) marketName(t.product) else tr("Belum dicek", "Not checked")
+        infoName.text = if (t != null) marketName(t.product) else tr("Belum Dicek", "Not checked")
         infoDetail.text = if (t != null) "${t.product} · ${t.serial}" else "-"
         infoUnlock.text = unlockText()
         menuImg.alpha = if (ok) 1f else 0.4f
@@ -49,7 +51,7 @@ class MainActivity : FlasherBase() {
     }
 
     private fun unlockText(): String = when {
-        Session.target == null -> tr("Belum dicek", "Not checked")
+        Session.target == null -> tr("Belum Dicek", "Not checked")
         Session.unlocked == "yes" -> tr("Terbuka", "Unlocked")
         Session.unlocked == "no" -> tr("Terkunci", "Locked")
         Session.unlocked == "unknown" -> tr("Tidak terbaca", "Not readable")
@@ -129,6 +131,68 @@ class MainActivity : FlasherBase() {
         return wrap
     }
 
+    /** Garis pinggir gradasi neon dengan isi gelap, sama seperti tombol di layar Flash file img. */
+    private fun neonFrame(radiusDp: Int, fill: Int): LayerDrawable {
+        val outer = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
+        ).apply { cornerRadius = dp(radiusDp).toFloat() }
+        val inner = GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(radiusDp - 2).toFloat()
+        }
+        return LayerDrawable(arrayOf(outer, inner)).apply {
+            setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
+        }
+    }
+
+    /** Kartu dengan garis neon, dipakai untuk kartu perangkat. */
+    private fun neonCard(): LinearLayout {
+        val p = pal()
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = neonFrame(14, p.card)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            layoutParams = lp(bottom = 16)
+        }
+    }
+
+    /** Baris menu atau kontak dengan garis neon: lencana, judul, keterangan, dan panah. */
+    private fun neonRow(
+        badge: String,
+        badgeFill: Int,
+        badgeText: Int,
+        title: String,
+        sub: String,
+        onClick: () -> Unit
+    ): LinearLayout {
+        val p = pal()
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = neonFrame(12, p.card)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            layoutParams = lp(top = 10)
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+        row.addView(textLine(badge, 12f, medium = true, color = badgeText).apply {
+            gravity = Gravity.CENTER
+            background = rounded(badgeFill, 10, null)
+            layoutParams = LinearLayout.LayoutParams(dp(56), dp(44))
+        })
+        val text = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, dp(8), 0)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        text.addView(textLine(title, 16f, medium = true, color = p.text))
+        text.addView(textLine(sub, 13f, color = p.muted))
+        row.addView(text)
+        row.addView(textLine("›", 22f, color = p.muted))
+        return row
+    }
+
     private fun buildUi() {
         val p = pal()
         val root = LinearLayout(this).apply {
@@ -150,12 +214,12 @@ class MainActivity : FlasherBase() {
         header.addView(langSwitch())
         root.addView(header)
 
-        val card = box()
+        val card = neonCard()
         val cardTop = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        cardTop.addView(textLine(tr("Perangkat target", "Target device"), 12f, color = p.muted).apply {
+        cardTop.addView(textLine(tr("Perangkat", "Device"), 12f, color = p.muted).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         statusBadge = textLine("", 11f).apply { setPadding(dp(8), dp(2), dp(8), dp(2)) }
@@ -182,26 +246,25 @@ class MainActivity : FlasherBase() {
         root.addView(btn(tr("CEK FASTBOOT", "CHECK FASTBOOT DEVICE"), BtnStyle.PRIMARY) { onCheckTarget() })
 
         root.addView(caption(tr("Menu", "Menu")).apply { setTextColor(NeonTheme.MAGENTA) })
-        menuImg = rowCard(
-            "IMG",
-            tr("Flash file img", "Flash img file"),
-            tr("Satu file ke slot aktif", "One file to the active slot"),
-            p.soft, NeonTheme.MAGENTA
+        menuImg = neonRow(
+            "IMG", p.soft, NeonTheme.MAGENTA,
+            "FLASH FILE IMG",
+            tr("isi nama partisi, pilih file .img",
+                "enter the partition name, pick a .img file")
         ) { openScreen(FlashImgActivity::class.java) }
         root.addView(menuImg)
-        menuRom = rowCard(
-            "ROM",
-            tr("Flash fastboot ROM tgz", "Flash fastboot ROM tgz"),
-            tr("ROM lengkap dari folder atau .tgz", "Full ROM from a folder or .tgz"),
-            p.soft, NeonTheme.MAGENTA
+        menuRom = neonRow(
+            "ROM", p.soft, NeonTheme.MAGENTA,
+            "FLASH FASTBOOT ROM",
+            tr("pilih folder atau .tgz, pilih script, buat rencana, lalu jalankan",
+                "pick a folder or .tgz, choose a script, make a plan, then run it")
         ) { openScreen(FlashRomActivity::class.java) }
         root.addView(menuRom)
         // ADB sideload: hanya tampilan dulu, fiturnya belum dikerjakan
-        val menuSdl = rowCard(
-            "SDL",
-            tr("ADB sideload", "ADB sideload"),
-            tr("Kirim file ZIP dari recovery", "Send a ZIP file from recovery"),
-            p.soft, NeonTheme.MAGENTA
+        val menuSdl = neonRow(
+            "SDL", p.soft, NeonTheme.MAGENTA,
+            "ADB SIDELOAD",
+            tr("kirim file .zip dari recovery lewat adb", "send a .zip file from recovery over adb")
         ) {
             Toast.makeText(this, tr("Segera hadir", "Coming soon"), Toast.LENGTH_SHORT).show()
         }
@@ -215,10 +278,10 @@ class MainActivity : FlasherBase() {
         root.addView(lockNote)
 
         root.addView(caption(tr("Kontak", "Contact")).apply { setTextColor(NeonTheme.MAGENTA) })
-        root.addView(rowCard("TG", "Telegram", "@Skypin969", p.tgSoft, p.tgIcon) {
+        root.addView(neonRow("TG", p.tgSoft, p.tgIcon, "Telegram", "@Skypin969") {
             openUrl("https://t.me/Skypin969")
         })
-        root.addView(rowCard("GH", "GitHub", "github.com/skypin969", p.ghSoft, p.ghIcon) {
+        root.addView(neonRow("GH", p.ghSoft, p.ghIcon, "GitHub", "github.com/skypin969") {
             openUrl("https://github.com/skypin969")
         })
 
