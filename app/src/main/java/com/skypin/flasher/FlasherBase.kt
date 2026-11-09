@@ -23,7 +23,6 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
-import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -185,6 +184,9 @@ class BackArrowDrawable(private val strokePx: Float, arrowColor: Int) : Drawable
 /** Gaya tombol: utama, sekunder, dan bahaya. */
 enum class BtnStyle { PRIMARY, SECONDARY, DANGER }
 
+/** Dilempar saat menunggu izin USB. Bukan kegagalan, jadi tidak ditampilkan sebagai GAGAL. */
+class PermissionPendingException : RuntimeException()
+
 /** Kerangka bersama: izin USB, tugas latar, log, dan elemen tampilan. */
 abstract class FlasherBase : Activity() {
 
@@ -195,22 +197,48 @@ abstract class FlasherBase : Activity() {
     private var logView: TextView? = null
     private var logScroll: ScrollView? = null
 
+    /** Tugas yang dijalankan sendiri begitu izin USB diberikan, misalnya CEK FASTBOOT. */
+    @Volatile private var pendingRetry: (() -> Unit)? = null
+
     private val permReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            log(
-                if (granted) tr("Izin USB sudah diberikan. Tekan tombol tadi sekali lagi.", "USB permission granted. Press the button again.")
-                else tr("Izin USB ditolak.", "USB permission denied.")
-            )
+            val retry = pendingRetry
+            pendingRetry = null
+            when {
+                !granted -> log(tr("Izin USB ditolak.", "USB permission denied."))
+                retry != null -> retry()
+                else -> log(
+                    tr("Izin USB sudah diberikan. Tekan tombol lagi untuk melanjutkan.",
+                        "USB permission granted. Press the button again to continue.")
+                )
+            }
         }
     }
+
+    /** Colokan fastboot baru dan izinnya belum ada: minta izin, lalu lanjutkan sendiri setelah Oke. */
+    private val attachReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+            val usb = getSystemService(Context.USB_SERVICE) as UsbManager
+            val (dev, _) = findFastboot(usb) ?: return
+            if (usb.hasPermission(dev)) return
+            pendingRetry = { onFastbootAttached() }
+            requestUsbPermission(usb, dev)
+        }
+    }
+
+    /** Halaman yang ingin bereaksi sendiri saat colokan fastboot baru diberi izin. */
+    protected open val autoCheckOnAttach: Boolean get() = false
+
+    /** Dipanggil setelah izin untuk colokan baru diberikan. */
+    protected open fun onFastbootAttached() {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Session.load(this)
         Fonts.load(this)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         applyWindow()
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         if (Build.VERSION.SDK_INT >= 33) {
@@ -218,10 +246,19 @@ abstract class FlasherBase : Activity() {
         } else {
             registerReceiver(permReceiver, filter)
         }
+        if (autoCheckOnAttach) {
+            val attachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(attachReceiver, attachFilter, Context.RECEIVER_EXPORTED)
+            } else {
+                registerReceiver(attachReceiver, attachFilter)
+            }
+        }
     }
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(permReceiver) }
+        runCatching { unregisterReceiver(attachReceiver) }
         worker.shutdown()
         super.onDestroy()
     }
@@ -297,6 +334,8 @@ abstract class FlasherBase : Activity() {
                 task()
             } catch (e: FastbootException) {
                 log(tr("GAGAL: ", "FAILED: ") + e.message)
+            } catch (e: PermissionPendingException) {
+                log(tr("Menunggu izin USB. Setujui popup yang muncul.", "Waiting for USB permission. Approve the popup."))
             } catch (e: Exception) {
                 log("ERROR: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
@@ -319,7 +358,17 @@ abstract class FlasherBase : Activity() {
         return null
     }
 
-    protected fun <T> withFastboot(block: (Fastboot) -> T): T {
+    private fun requestUsbPermission(usb: UsbManager, dev: UsbDevice) {
+        val pi = PendingIntent.getBroadcast(
+            this, 0,
+            Intent(ACTION_USB_PERMISSION).setPackage(packageName),
+            PendingIntent.FLAG_MUTABLE
+        )
+        usb.requestPermission(dev, pi)
+    }
+
+    /** Menjalankan [block] dengan koneksi fastboot. Jika izin USB belum ada, [retryOnPermission] dijalankan sendiri setelah Oke. */
+    protected fun <T> withFastboot(retryOnPermission: (() -> Unit)? = null, block: (Fastboot) -> T): T {
         val usb = getSystemService(Context.USB_SERVICE) as UsbManager
         val (dev, iface) = findFastboot(usb)
             ?: throw FastbootException(
@@ -329,12 +378,9 @@ abstract class FlasherBase : Activity() {
                 )
             )
         if (!usb.hasPermission(dev)) {
-            val pi = PendingIntent.getBroadcast(
-                this, 0,
-                Intent(ACTION_USB_PERMISSION).setPackage(packageName),
-                PendingIntent.FLAG_MUTABLE
-            )
-            usb.requestPermission(dev, pi)
+            pendingRetry = retryOnPermission
+            requestUsbPermission(usb, dev)
+            if (retryOnPermission != null) throw PermissionPendingException()
             throw FastbootException(
                 tr(
                     "Belum ada izin USB. Setujui izin yang muncul, lalu tekan tombol lagi.",
