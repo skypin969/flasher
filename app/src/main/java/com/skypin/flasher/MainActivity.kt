@@ -62,7 +62,7 @@ class MainActivity : FlasherBase() {
 
     private fun onCheckTarget() {
         runTask(tr("CEK FASTBOOT", "CHECK FASTBOOT DEVICE")) {
-            val (d, unlocked) = withFastboot { fb -> Pair(readDevice(fb), fb.getvar("unlocked")) }
+            val (d, unlocked) = withFastboot(retryOnPermission = { onCheckTarget() }) { fb -> Pair(readDevice(fb), fb.getvar("unlocked")) }
             if (d.product.isBlank() || d.serial.isBlank()) {
                 Session.target = null
                 throw FastbootException(
@@ -80,6 +80,13 @@ class MainActivity : FlasherBase() {
             log("Codename: ${d.product}, serial: ${d.serial}")
             runOnUiThread { refresh() }
         }
+    }
+
+    override val autoCheckOnAttach: Boolean get() = true
+
+    /** Colokan fastboot baru diberi izin: langsung CEK FASTBOOT tanpa perlu menekan tombol. */
+    override fun onFastbootAttached() {
+        onCheckTarget()
     }
 
     private fun openScreen(target: Class<*>) {
