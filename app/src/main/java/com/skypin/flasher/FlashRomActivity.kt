@@ -1,6 +1,5 @@
 package com.skypin.flasher
 
-import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -9,7 +8,6 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.net.Uri
@@ -17,24 +15,26 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
 import java.io.IOException
 
-/** Halaman Flash fastboot ROM tgz: pilih paket, pilih script, buat rencana, lalu jalankan. */
+/** Halaman Flash fastboot ROM tgz: pilih paket, script flash_all.sh dipilih otomatis, lalu jalankan. */
 class FlashRomActivity : FlasherBase() {
 
     @Volatile private var romSource: RomSource? = null
     @Volatile private var romName = ""
-    @Volatile private var romScripts: List<String> = emptyList()
+    /** "flash_all.sh" jika ada di paket. Null jika tidak ada. */
     @Volatile private var romScript: String? = null
-    @Volatile private var plan: RomPlan? = null
 
     private lateinit var romInfo: TextView
-    private lateinit var scriptBtn: TextView
-    private lateinit var dryRunSwitch: NeonToggle
+    private lateinit var missingText: TextView
+    private lateinit var scriptRow: LinearLayout
+    private lateinit var runBtn: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,110 +77,42 @@ class FlashRomActivity : FlasherBase() {
         }
     }
 
+    /** Memilih flash_all.sh otomatis. Jika tidak ada, tampilkan pesan dan JALANKAN dimatikan. */
     private fun setRom(src: RomSource, name: String) {
-        // Script flash_all_except_data_storage.sh tidak dipakai di aplikasi ini, jadi disembunyikan dari daftar
+        // Script flash_all_except_data_storage.sh tidak dipakai di aplikasi ini, jadi disembunyikan
         val scripts = listScripts(src).filter { it != "flash_all_except_data_storage.sh" }
+        val script = if ("flash_all.sh" in scripts) "flash_all.sh" else null
         romSource = src
         romName = name
-        romScripts = scripts
-        romScript = null
-        plan = null
-        val msg = if (scripts.isEmpty()) {
+        romScript = script
+        val msg = if (script == null) {
             tr("Paket: $name\nTidak ada script flash (flash_all.sh) di paket ini.",
                 "Package: $name\nNo flash script (flash_all.sh) in this package.")
         } else {
-            tr("Paket: $name\nScript ditemukan: ${scripts.joinToString(", ")}\nPilih script, lalu tekan Buat rencana.",
-                "Package: $name\nScripts found: ${scripts.joinToString(", ")}\nChoose a script, then press Make plan.")
+            tr("Paket: $name\nScript dipilih otomatis: flash_all.sh",
+                "Package: $name\nScript chosen automatically: flash_all.sh")
         }
         runOnUiThread {
-            romInfo.text = msg
-            scriptBtn.text = tr("PILIH SCRIPT", "CHOOSE SCRIPT")
-            applyNeonText(scriptBtn)
+            romInfo.text = tr("Paket: $name", "Package: $name")
+            missingText.visibility = if (script == null) View.VISIBLE else View.GONE
+            scriptRow.visibility = if (script != null) View.VISIBLE else View.GONE
+            runBtn.isEnabled = script != null
+            runBtn.alpha = if (script != null) 1f else 0.4f
         }
         log(msg.replace("\n", " | "))
     }
 
-    /** Dialog pilih script: latar gelap, garis gradasi neon, pilihan tulisan putih. */
-    private fun pickScript() {
-        val scripts = romScripts
-        if (scripts.isEmpty()) {
-            alert(tr("Belum ada paket ROM, atau paket tidak punya script flash.",
-                "No ROM package yet, or the package has no flash script."))
-            return
-        }
-        val p = pal()
-        val width = (resources.displayMetrics.widthPixels * 0.85f).toInt()
-        val picker = Dialog(this)
-        picker.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        picker.window?.setDimAmount(0.6f)
-        picker.window?.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
-
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = neonFrame(p.card, 14)
-            setPadding(dp(18), dp(18), dp(18), dp(18))
-        }
-        panel.addView(textLine(tr("PILIH SCRIPT", "CHOOSE SCRIPT"), 16f, medium = true, color = p.text))
-        for (s in scripts) {
-            panel.addView(textLine(s, 14f, color = Color.WHITE).apply {
-                setPadding(dp(12), dp(12), dp(12), dp(12))
-                background = neonFrame(p.card, 10)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(16) }
-                setOnClickListener {
-                    picker.dismiss()
-                    romScript = s
-                    plan = null
-                    scriptBtn.text = s
-                    applyNeonText(scriptBtn)
-                    romInfo.text = tr("Paket: $romName\nScript: $s\nTekan Buat rencana.",
-                        "Package: $romName\nScript: $s\nPress Make plan.")
-                }
-            })
-        }
-        picker.setContentView(panel)
-        picker.show()
-    }
-
-    private fun onPlanRom() {
-        val t = requireTarget() ?: return
-        val src = romSource
-        val script = romScript
-        if (src == null) {
-            alert(tr("Pilih paket ROM dulu.", "Choose a ROM package first."))
-            return
-        }
-        if (script == null) {
-            alert(tr("Pilih script dulu.", "Choose a script first."))
-            return
-        }
-        runTask(tr("Buat rencana ROM", "Make ROM plan")) {
-            val p = withFastboot { fb ->
-                val now = readDevice(fb)
-                ensureSameDevice(now, t)
-                buildPlan(src, script, now, romName)
-            }
-            plan = p
-            log(describePlan(p, src))
-        }
-    }
-
+    /** Alur JALANKAN: cek perangkat, buat rencana dari flash_all.sh, tulis langkahnya ke log, lalu jalankan. */
     private fun onRunRom() {
         val t = requireTarget() ?: return
         val src = romSource
-        val p = plan
-        if (src == null || p == null) {
-            alert(tr("Buat rencana dulu: pilih paket, pilih script, lalu tekan Buat rencana.",
-                "Make a plan first: choose a package, choose a script, then press Make plan."))
+        val script = romScript
+        if (src == null || script == null) {
+            alert(tr("Pilih paket ROM yang berisi flash_all.sh dulu.",
+                "Choose a ROM package that contains flash_all.sh first."))
             return
         }
-        if (p.errors.isNotEmpty()) {
-            alert(tr("Rencana tidak bisa dijalankan:\n\n", "The plan cannot be run:\n\n") + p.errors.joinToString("\n"))
-            return
-        }
-        val dry = dryRunSwitch.isChecked
+        val dry = FlashSettings.dryRun(this)
         val msg = if (dry) {
             tr("Mode uji: tidak ada data yang dikirim ke perangkat. Lanjutkan?",
                 "Test mode: no data is sent to the device. Continue?")
@@ -195,9 +127,10 @@ class FlashRomActivity : FlasherBase() {
                 withFastboot { fb ->
                     val now = readDevice(fb)
                     ensureSameDevice(now, t)
-                    val fresh = buildPlan(src, p.script, now, romName)
-                    if (fresh.errors.isNotEmpty()) throw FastbootException(fresh.errors.joinToString("; "))
-                    runPlan(fb, src, fresh, dry) { m -> log(m) }
+                    val p = buildPlan(src, script, now, romName)
+                    if (p.errors.isNotEmpty()) throw FastbootException(p.errors.joinToString("; "))
+                    log(describePlan(p, src))
+                    runPlan(fb, src, p, dry) { m -> log(m) }
                 }
             }
         }
@@ -230,13 +163,41 @@ class FlashRomActivity : FlasherBase() {
         }
     }
 
+    /** Log setinggi 260 dp. Ukurannya sama dengan log di FLASH FILE IMG. */
+    private fun logPanel(): LinearLayout = makeLog().also { section ->
+        section.getChildAt(1).layoutParams =
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(260))
+    }
+
     private fun buildUi() {
         val p = pal()
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(8))
         }
-        content.addView(backButton { finish() })
+
+        // Baris atas: Kembali di kiri, tombol Pengaturan (ikon sliders) di kanan
+        val back = backButton { finish() }
+        back.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            topMargin = dp(8)
+        }
+        val gear = FrameLayout(this).apply {
+            background = rounded(p.card, 10, p.border)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                startActivity(Intent(this@FlashRomActivity, FlashSettingsActivity::class.java))
+            }
+            addView(SlidersIcon(this@FlashRomActivity), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        }
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(back)
+            addView(gear, LinearLayout.LayoutParams(dp(36), dp(36)).apply { topMargin = dp(8) })
+        }
+        content.addView(topRow)
+
         content.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true).apply {
             paint.isFakeBoldText = true
             applyNeonText(this)
@@ -251,7 +212,6 @@ class FlashRomActivity : FlasherBase() {
         )
 
         val form = box()
-
         val step1 = subCard()
         step1.addView(caption(tr("sebelum pilih folder, ekstrak dulu file fastboot.tgz",
             "Before choosing a folder, extract fastboot.tgz first")))
@@ -264,61 +224,86 @@ class FlashRomActivity : FlasherBase() {
         romInfo = textLine(tr("belum ada paket rom dipilih", "No ROM package chosen yet"), 12f, color = p.muted, mono = true)
         romInfo.setPadding(0, dp(8), 0, 0)
         step1.addView(romInfo)
-        form.addView(step1)
 
-        val step2 = subCard()
-        step2.addView(textLine(tr("PILIH SCRIPT FLASH", "CHOOSE FLASH SCRIPT"), 12f, medium = true, color = Color.WHITE).apply {
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        })
-        scriptBtn = neonOutline(tr("PILIH SCRIPT", "CHOOSE SCRIPT")) { pickScript() }
-        scriptBtn.layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(8) }
-        step2.addView(scriptBtn)
-        form.addView(step2)
-
-        form.addView(btn(tr("BUAT RENCANA", "MAKE PLAN"), BtnStyle.PRIMARY) { onPlanRom() })
-
-        // Mode uji: kartu sendiri, dengan saklar gradasi
-        val modeRow = LinearLayout(this).apply {
+        // Setelah paket dipilih: flash_all.sh tampil sebagai pil, dengan keterangan dipilih otomatis
+        scriptRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = rounded(p.card, 10, p.border)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setPadding(0, dp(8), 0, 0)
+            visibility = View.GONE
+        }
+        scriptRow.addView(textLine("flash_all.sh", 13f, medium = true, color = p.text).apply {
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            background = neonFrame(p.card, 14)
+            applyNeonText(this)
+        })
+        scriptRow.addView(textLine(tr("dipilih otomatis", "chosen automatically"), 12f, color = p.muted).apply {
+            setPadding(dp(8), 0, 0, 0)
+        })
+        step1.addView(scriptRow)
+
+        // Jika flash_all.sh tidak ada di paket
+        missingText = textLine(
+            tr("Tidak ada script flash (flash_all.sh) di paket ini.",
+                "No flash script (flash_all.sh) in this package."),
+            12f,
+            color = p.warnText
+        ).apply {
+            setPadding(0, dp(8), 0, 0)
+            visibility = View.GONE
+        }
+        step1.addView(missingText)
+        form.addView(step1)
+        content.addView(form)
+
+        val warn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = rounded(p.warnBg, 10, null)
             layoutParams = lp(top = 8)
         }
-        val modeText = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        modeText.addView(textLine(tr("Mode Uji", "Test Mode"), 14f, medium = true, color = p.text))
-        modeText.addView(textLine(tr("tidak mengirim data", "sends no data"), 12f, color = p.muted))
-        modeRow.addView(modeText)
-        dryRunSwitch = NeonToggle(this).apply {
-            isChecked = true
-        }
-        modeRow.addView(dryRunSwitch)
-        form.addView(modeRow)
-
-        val warn = box()
-        warn.background = rounded(p.warnBg, 10, null)
         warn.addView(textLine(
             tr("saat proses flashing rom berjalan, layar tidak boleh sampai mati atau mengunci layar.",
                 "While ROM flashing is running, the screen must not turn off or lock."),
             12f,
             color = p.warnText
         ))
-        form.addView(warn)
+        content.addView(warn)
 
-        form.addView(btn(tr("JALANKAN", "RUN"), BtnStyle.PRIMARY) { onRunRom() })
-        content.addView(form)
+        runBtn = btn(tr("JALANKAN", "RUN"), BtnStyle.PRIMARY) { onRunRom() }
+        runBtn.paint.isFakeBoldText = true
+        runBtn.isEnabled = false
+        runBtn.alpha = 0.4f
+        content.addView(runBtn)
 
-        setContentView(page(ScrollView(this).apply { addView(content) }, makeLog()))
+        setContentView(page(ScrollView(this).apply { addView(content) }, logPanel()))
+    }
+}
+
+/** Ikon tiga garis dengan bulatan (sliders), digambar sendiri. Dipakai sebagai tombol Pengaturan. */
+class SlidersIcon(context: Context) : View(context) {
+
+    private val density = context.resources.displayMetrics.density
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = NeonTheme.CYAN
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeWidth = 2f * density
+    }
+    private val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        // Koordinat dibuat untuk kotak 24 x 24, lalu diskalakan ke ukuran view
+        val s = width / 24f
+        knobPaint.color = pal().card
+        val rows = listOf(Pair(6f, 9f), Pair(12f, 15f), Pair(18f, 8f))
+        for ((y, kx) in rows) {
+            canvas.drawLine(4f * s, y * s, 20f * s, y * s, linePaint)
+            canvas.drawCircle(kx * s, y * s, 2.5f * s, knobPaint)
+            canvas.drawCircle(kx * s, y * s, 2.5f * s, linePaint)
+        }
     }
 }
 
