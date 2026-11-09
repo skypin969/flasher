@@ -182,7 +182,7 @@ class FlashRomActivity : FlasherBase() {
                 "Test mode: no data is sent to the device. Continue?")
         } else {
             tr("PERINGATAN: flash asli akan menghapus semua data di ${t.product} (${t.serial}) " +
-                "dan menimpa semua partisi yang sudah di ubah. Lanjutkan?",
+                "dan menimpa semua partisi yang sudah diubah. Lanjutkan?",
                 "WARNING: real flash will erase all data on ${t.product} (${t.serial}) " +
                     "and overwrite every changed partition. Continue?")
         }
@@ -259,7 +259,7 @@ class FlashRomActivity : FlasherBase() {
 
     private fun neonToggleThumb(): StateListDrawable {
         fun dot(color: Int) = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
+            setShape(GradientDrawable.OVAL)
             setColor(color)
             setSize(dp(24), dp(24))
         }
