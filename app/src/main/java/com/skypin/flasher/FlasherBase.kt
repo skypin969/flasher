@@ -379,6 +379,22 @@ abstract class FlasherBase : Activity() {
     /** Interface ADB sideload memakai protokol 0x01. */
     private fun findAdb(usb: UsbManager) = findInterface(usb, 0x01)
 
+    /** Daftar semua perangkat USB dan interface-nya, untuk diagnosis saat perangkat ADB tidak ditemukan. */
+    private fun usbDump(usb: UsbManager): String {
+        val devices = usb.deviceList.values
+        if (devices.isEmpty()) return tr("(tidak ada perangkat USB yang terbaca)", "(no USB device readable)")
+        return devices.joinToString("\n") { dev ->
+            val head = "- ${dev.productName ?: tr("tanpa nama", "no name")} vid=%04x pid=%04x".format(dev.vendorId, dev.productId)
+            val ifs = (0 until dev.interfaceCount).joinToString("") { i ->
+                val itf = dev.getInterface(i)
+                "\n    interface $i: class=%02x sub=%02x proto=%02x".format(
+                    itf.interfaceClass, itf.interfaceSubclass, itf.interfaceProtocol
+                )
+            }
+            head + ifs
+        }
+    }
+
     private fun requestUsbPermission(usb: UsbManager, dev: UsbDevice) {
         val pi = PendingIntent.getBroadcast(
             this, 0,
@@ -431,7 +447,7 @@ abstract class FlasherBase : Activity() {
                 tr(
                     "Perangkat ADB tidak ditemukan. Pastikan HP target sudah di recovery dan memilih Apply from ADB, serta kabel OTG terpasang.",
                     "ADB device not found. Make sure the target phone is in recovery with Apply from ADB selected, and the OTG cable is connected."
-                )
+                ) + "\n" + tr("Perangkat USB yang terbaca:", "USB devices seen:") + "\n" + usbDump(usb)
             )
         if (!usb.hasPermission(dev)) {
             pendingRetry = retryOnPermission
