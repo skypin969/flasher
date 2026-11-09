@@ -14,6 +14,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
@@ -36,6 +37,7 @@ const val ACTION_USB_PERMISSION = "com.skypin.flasher.USB_PERMISSION"
 const val REQ_PICK_IMG = 1001
 const val REQ_PICK_TREE = 1002
 const val REQ_PICK_TGZ = 1003
+const val REQ_PICK_ZIP = 1004
 
 /** Data bersama: hasil CEK FASTBOOT dan bahasa. */
 object Session {
@@ -271,22 +273,32 @@ abstract class FlasherBase : Activity() {
         window.decorView.systemUiVisibility = 0
     }
 
-    /** Area log di bawah layar. Bisa dibuka dan ditutup. Halaman tanpa log memakai notifikasi singkat. */
-    protected fun makeLog(): LinearLayout {
+    /**
+     * Area log. Mode biasa bisa dibuka dan ditutup, tingginya 150 dp.
+     * Mode [fill] mengisi sisa tinggi layar dan selalu terbuka. Pemanggil harus memberi layout weight 1 pada hasilnya.
+     * Halaman tanpa log memakai notifikasi singkat.
+     */
+    protected fun makeLog(fill: Boolean = false): LinearLayout {
         val p = pal()
-        val tv = textLine("", 12f, color = p.text, mono = true).apply { setTextIsSelectable(true) }
+        val tv = textLine("", if (fill) 13f else 12f, color = p.text, mono = true).apply { setTextIsSelectable(true) }
         val sv = ScrollView(this).apply {
             addView(tv)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(150))
+            layoutParams = if (fill) {
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            } else {
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(150))
+            }
         }
         logView = tv
         logScroll = sv
-        val title = textLine("Log  ▼", 12f, medium = true, color = p.accent)
+        val title = textLine(if (fill) "Log" else "Log  ▼", 12f, medium = true, color = p.accent)
         var open = true
-        title.setOnClickListener {
-            open = !open
-            sv.visibility = if (open) View.VISIBLE else View.GONE
-            title.text = if (open) "Log  ▼" else "Log  ▶"
+        if (!fill) {
+            title.setOnClickListener {
+                open = !open
+                sv.visibility = if (open) View.VISIBLE else View.GONE
+                title.text = if (open) "Log  ▼" else "Log  ▶"
+            }
         }
         val section = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -334,6 +346,8 @@ abstract class FlasherBase : Activity() {
                 task()
             } catch (e: FastbootException) {
                 log(tr("GAGAL: ", "FAILED: ") + e.message)
+            } catch (e: AdbException) {
+                log(tr("GAGAL: ", "FAILED: ") + e.message)
             } catch (e: PermissionPendingException) {
                 log(tr("Menunggu izin USB. Setujui popup yang muncul.", "Waiting for USB permission. Approve the popup."))
             } catch (e: Exception) {
@@ -344,19 +358,26 @@ abstract class FlasherBase : Activity() {
         }
     }
 
-    // ---------- USB fastboot ----------
+    // ---------- USB fastboot dan ADB ----------
 
-    private fun findFastboot(usb: UsbManager): Pair<UsbDevice, UsbInterface>? {
+    /** Cari interface USB dengan kelas 0xFF, subclass 0x42, dan protokol [protocol]. */
+    private fun findInterface(usb: UsbManager, protocol: Int): Pair<UsbDevice, UsbInterface>? {
         for (dev in usb.deviceList.values) {
             for (i in 0 until dev.interfaceCount) {
                 val itf = dev.getInterface(i)
-                if (itf.interfaceClass == 0xFF && itf.interfaceSubclass == 0x42 && itf.interfaceProtocol == 0x03) {
+                if (itf.interfaceClass == 0xFF && itf.interfaceSubclass == 0x42 && itf.interfaceProtocol == protocol) {
                     return Pair(dev, itf)
                 }
             }
         }
         return null
     }
+
+    /** Interface fastboot memakai protokol 0x03. */
+    private fun findFastboot(usb: UsbManager) = findInterface(usb, 0x03)
+
+    /** Interface ADB sideload memakai protokol 0x01. */
+    private fun findAdb(usb: UsbManager) = findInterface(usb, 0x01)
 
     private fun requestUsbPermission(usb: UsbManager, dev: UsbDevice) {
         val pi = PendingIntent.getBroadcast(
@@ -400,6 +421,51 @@ abstract class FlasherBase : Activity() {
         } finally {
             fb.close()
         }
+    }
+
+    /** Menjalankan [block] dengan koneksi ADB sideload. Izin USB ditangani sama seperti [withFastboot]. */
+    protected fun <T> withAdb(retryOnPermission: (() -> Unit)? = null, block: (AdbSideload) -> T): T {
+        val usb = getSystemService(Context.USB_SERVICE) as UsbManager
+        val (dev, iface) = findAdb(usb)
+            ?: throw AdbException(
+                tr(
+                    "Perangkat ADB tidak ditemukan. Pastikan HP target sudah di recovery dan memilih Apply from ADB, serta kabel OTG terpasang.",
+                    "ADB device not found. Make sure the target phone is in recovery with Apply from ADB selected, and the OTG cable is connected."
+                )
+            )
+        if (!usb.hasPermission(dev)) {
+            pendingRetry = retryOnPermission
+            requestUsbPermission(usb, dev)
+            if (retryOnPermission != null) throw PermissionPendingException()
+            throw AdbException(
+                tr(
+                    "Belum ada izin USB. Setujui izin yang muncul, lalu tekan tombol lagi.",
+                    "USB permission is not granted yet. Approve the prompt, then press the button again."
+                )
+            )
+        }
+        val conn = usb.openDevice(dev) ?: throw AdbException(tr("Gagal membuka perangkat USB", "Failed to open USB device"))
+        val adb = try {
+            AdbSideload(conn, iface)
+        } catch (e: AdbException) {
+            conn.close()
+            throw e
+        }
+        try {
+            return block(adb)
+        } finally {
+            adb.close()
+        }
+    }
+
+    /**
+     * Nama produk perangkat ADB dari USB.
+     * Null jika tidak ada perangkat ADB. Kosong jika perangkat ada tapi namanya tidak terbaca.
+     */
+    protected fun adbDeviceName(): String? {
+        val usb = getSystemService(Context.USB_SERVICE) as UsbManager
+        val (dev, _) = findAdb(usb) ?: return null
+        return dev.productName?.trim().orEmpty()
     }
 
     /** Perangkat yang terhubung harus sama dengan hasil CEK FASTBOOT. */
@@ -481,6 +547,21 @@ abstract class FlasherBase : Activity() {
             if (stroke != null) setStroke(dp(1), stroke)
         }
 
+    /** Garis pinggir gradasi neon dengan isi [fill]. Dipakai kartu, baris menu, dan tombol garis neon. */
+    protected fun neonFrame(radiusDp: Int, fill: Int): LayerDrawable {
+        val outer = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
+        ).apply { cornerRadius = dp(radiusDp).toFloat() }
+        val inner = GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(radiusDp - 2).toFloat()
+        }
+        return LayerDrawable(arrayOf(outer, inner)).apply {
+            setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
+        }
+    }
+
     /** Margin standar untuk elemen di dalam kolom vertikal. */
     protected fun lp(top: Int = 0, bottom: Int = 0): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
@@ -494,6 +575,17 @@ abstract class FlasherBase : Activity() {
         setPadding(dp(14), dp(12), dp(14), dp(12))
         background = rounded(pal().card, 14, pal().border)
         layoutParams = lp(bottom = 10)
+    }
+
+    /** Kartu dengan garis neon, dipakai untuk kartu perangkat dan status. */
+    protected fun neonCard(): LinearLayout {
+        val p = pal()
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = neonFrame(14, p.card)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            layoutParams = lp(bottom = 16)
+        }
     }
 
     /** Kartu kecil di dalam kartu utama. */
@@ -542,6 +634,24 @@ abstract class FlasherBase : Activity() {
             typeface = if (style == BtnStyle.SECONDARY) Fonts.regular else Fonts.medium
             setTextColor(fg)
             background = bgDrawable
+            stateListAnimator = null
+            minimumHeight = dp(44)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setOnClickListener { onClick() }
+            layoutParams = lp(top = 8)
+        }
+    }
+
+    /** Tombol garis neon dengan isi gelap, untuk aksi kedua di layar seperti PILIH FILE ZIP. */
+    protected fun neonOutlineBtn(label: String, onClick: () -> Unit): Button {
+        val p = pal()
+        return Button(this).apply {
+            text = label
+            setAllCaps(false)
+            textSize = 14f
+            typeface = Fonts.medium
+            setTextColor(p.text)
+            background = neonFrame(10, p.card)
             stateListAnimator = null
             minimumHeight = dp(44)
             setPadding(dp(12), dp(8), dp(12), dp(8))
