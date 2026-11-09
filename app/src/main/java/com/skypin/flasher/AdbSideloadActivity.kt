@@ -1,6 +1,8 @@
 package com.skypin.flasher
 
 import android.content.Intent
+import android.graphics.LinearGradient
+import android.graphics.Shader
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -66,7 +68,7 @@ class AdbSideloadActivity : FlasherBase() {
         }
 
         root.addView(backButton { onBack() })
-        root.addView(textLine("ADB SIDELOAD", 22f, medium = true, color = p.text).apply {
+        root.addView(gradientTitle("ADB SIDELOAD", 22f).apply {
             setPadding(0, dp(4), 0, 0)
         })
         root.addView(textLine(
@@ -158,6 +160,24 @@ class AdbSideloadActivity : FlasherBase() {
 
     private fun stepLine(s: String): TextView = textLine(s, 14f).apply {
         setPadding(0, dp(6), 0, 0)
+    }
+
+    /** Judul tebal dengan gradasi ungu ke cyan, seperti di tampilan Flashmate. Gradasi mengikuti lebar tulisan. */
+    private fun gradientTitle(s: String, size: Float): TextView = textLine(s, size, medium = true).apply {
+        paint.isFakeBoldText = true
+        addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            val tv = v as TextView
+            val w = tv.paint.measureText(tv.text.toString())
+            if (w > 0f) {
+                tv.paint.shader = LinearGradient(
+                    0f, 0f, w, 0f,
+                    intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+                tv.invalidate()
+            }
+        }
     }
 
     /** Menampilkan bagian sebelum kirim atau sesudah kirim, sesuai keadaan [sent]. */
