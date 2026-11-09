@@ -13,7 +13,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.io.IOException
 
-/** Halaman Flash file img: pilih file, tulis ke slot aktif, lalu tampil hasil dengan tombol flash file lain dan reboot. */
+/** Halaman FLASH FILE IMG: pilih file, tulis ke slot aktif, lalu tampil hasil dengan tombol flash file lain dan reboot. */
 class FlashImgActivity : FlasherBase() {
 
     @Volatile private var imgUri: Uri? = null
@@ -153,6 +153,12 @@ class FlashImgActivity : FlasherBase() {
         }
     }
 
+    /** Log setinggi 260 dp. Ukurannya sama dengan log di FLASH FASTBOOT ROM. */
+    private fun logPanel(): LinearLayout = makeLog().also { section ->
+        section.getChildAt(1).layoutParams =
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(260))
+    }
+
     /** Tombol sekunder bergaris neon: isi gelap, garis pinggir dan tulisan bergradasi. */
     private fun neonOutline(label: String, radiusDp: Int, textSp: Float, padDp: Int, action: () -> Unit): TextView {
         val p = pal()
@@ -185,7 +191,7 @@ class FlashImgActivity : FlasherBase() {
 
         backBtn = backButton { finish() }
         content.addView(backBtn)
-        content.addView(textLine(tr("FLASH FILE IMG", "FLASH IMG FILE"), 22f, medium = true).apply {
+        content.addView(textLine(tr("FLASH FILE IMG", "FLASH FILE IMG"), 22f, medium = true).apply {
             paint.isFakeBoldText = true
             applyNeonText(this)
             setPadding(0, dp(8), 0, 0)
@@ -201,7 +207,7 @@ class FlashImgActivity : FlasherBase() {
         formPanel = box()
         formPanel.addView(caption(tr("nama partisi", "partition name")))
         partitionInput = EditText(this).apply {
-            hint = tr("contoh: boot, vendor_boot, atau init_boot", "example: boot, vendor_boot, or init_boot")
+            hint = tr("contoh: boot, init_boot, atau vendor_boot", "example: boot, init_boot, or vendor_boot")
             setHintTextColor(p.muted)
             setTextColor(p.text)
             typeface = Fonts.regular
@@ -216,7 +222,7 @@ class FlashImgActivity : FlasherBase() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(8), 0, 0)
         }
-        for ((i, name) in listOf("boot", "vendor_boot", "init_boot").withIndex()) {
+        for ((i, name) in listOf("boot", "init_boot", "vendor_boot").withIndex()) {
             val chip = neonOutline(name, 20, 13f, 8) { partitionInput.setText(name) }
             chip.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginStart = if (i > 0) dp(8) else 0
@@ -234,12 +240,10 @@ class FlashImgActivity : FlasherBase() {
         imgInfo = textLine(tr("belum ada file .img yang di pilih", "no .img file chosen yet"), 13f, color = p.muted, mono = true)
         imgInfo.setPadding(0, dp(8), 0, 0)
         formPanel.addView(imgInfo)
-        formPanel.addView(btn(tr("FLASH SLOT AKTIF", "FLASH ACTIVE SLOT"), BtnStyle.PRIMARY) { onFlash() })
-        formPanel.addView(textLine(
-            tr("slot aktif akan di timpa.", "the active slot will be overwritten."),
-            12f,
-            color = p.warnText
-        ).apply { setPadding(0, dp(8), 0, 0) })
+
+        val bFlash = btn(tr("FLASH FILE", "FLASH FILE"), BtnStyle.PRIMARY) { onFlash() }
+        bFlash.paint.isFakeBoldText = true
+        formPanel.addView(bFlash)
         content.addView(formPanel)
 
         resultPanel = box()
@@ -252,6 +256,6 @@ class FlashImgActivity : FlasherBase() {
         resultPanel.addView(btn(tr("REBOOT PERANGKAT", "REBOOT DEVICE"), BtnStyle.PRIMARY) { onReboot() })
         content.addView(resultPanel)
 
-        setContentView(page(ScrollView(this).apply { addView(content) }, makeLog()))
+        setContentView(page(ScrollView(this).apply { addView(content) }, logPanel()))
     }
 }
