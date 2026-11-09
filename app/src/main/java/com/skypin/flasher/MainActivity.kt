@@ -151,7 +151,7 @@ class MainActivity : FlasherBase() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = neonFrame(12, p.card)
+            background = neonBorder(12, p.card)
             setPadding(dp(12), dp(12), dp(12), dp(12))
             layoutParams = lp(top = 10)
             isClickable = true
