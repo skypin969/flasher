@@ -144,7 +144,9 @@ class AdbSideloadActivity : FlasherBase() {
         // CEK dan KIRIM, sebelum kirim
         sendRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         sendRow.addView(neonOutlineBtn(tr("CEK ADB SIDELOAD", "CHECK ADB SIDELOAD")) { onCheck() })
-        sendRow.addView(btn(tr("KIRIM", "SEND"), BtnStyle.PRIMARY) { onSend() })
+        val sendBtn = btn(tr("KIRIM", "SEND"), BtnStyle.PRIMARY) { onSend() }
+        sendBtn.paint.isFakeBoldText = true
+        sendRow.addView(sendBtn)
         root.addView(sendRow)
 
         // Log mengisi sisa tinggi layar
