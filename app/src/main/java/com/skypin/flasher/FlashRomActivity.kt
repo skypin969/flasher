@@ -237,7 +237,9 @@ class FlashRomActivity : FlasherBase() {
             setPadding(dp(16), dp(16), dp(16), dp(8))
         }
         content.addView(backButton { finish() })
-        content.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true, color = p.text).apply {
+        content.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true).apply {
+            paint.isFakeBoldText = true
+            applyNeonText(this)
             setPadding(0, dp(8), 0, 0)
         })
         val tgt = Session.target
