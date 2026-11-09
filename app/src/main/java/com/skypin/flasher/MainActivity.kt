@@ -237,8 +237,8 @@ class MainActivity : FlasherBase() {
         menuRom = neonRow(
             "ROM", p.soft, NeonTheme.MAGENTA,
             "FLASH FASTBOOT ROM",
-            tr("pilih folder atau .tgz, pilih script, buat rencana, lalu jalankan",
-                "pick a folder or .tgz, choose a script, make a plan, then run it")
+            tr("pilih folder atau .tgz, lalu jalankan",
+                "pick a folder or .tgz, then run it")
         ) { openScreen(FlashRomActivity::class.java) }
         root.addView(menuRom)
         // ADB sideload: tidak perlu CEK FASTBOOT, layar itu memeriksa perangkat ADB sendiri
@@ -248,6 +248,14 @@ class MainActivity : FlasherBase() {
             tr("kirim file .zip dari recovery lewat adb", "send a .zip file from recovery over adb")
         ) { startActivity(Intent(this, AdbSideloadActivity::class.java)) }
         root.addView(menuSdl)
+        // TERMINAL: perintah shell tanpa root, atau dengan root lewat su. Tidak perlu CEK FASTBOOT.
+        val menuSh = neonRow(
+            "SH", p.soft, NeonTheme.MAGENTA,
+            "TERMINAL",
+            tr("jalankan perintah shell, tanpa root atau dengan root",
+                "run shell commands, without root or with root")
+        ) { startActivity(Intent(this, TerminalActivity::class.java)) }
+        root.addView(menuSh)
 
         lockNote = textLine(
             tr("Tekan CEK FASTBOOT dulu sebelum flash.", "Press CHECK FASTBOOT DEVICE before flashing."),
