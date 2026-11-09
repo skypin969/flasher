@@ -2,8 +2,6 @@ package com.skypin.flasher
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -140,32 +138,6 @@ class MainActivity : FlasherBase() {
         return wrap
     }
 
-    /** Garis pinggir gradasi neon dengan isi gelap, sama seperti tombol di layar Flash file img. */
-    private fun neonFrame(radiusDp: Int, fill: Int): LayerDrawable {
-        val outer = GradientDrawable(
-            GradientDrawable.Orientation.LEFT_RIGHT,
-            intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
-        ).apply { cornerRadius = dp(radiusDp).toFloat() }
-        val inner = GradientDrawable().apply {
-            setColor(fill)
-            cornerRadius = dp(radiusDp - 2).toFloat()
-        }
-        return LayerDrawable(arrayOf(outer, inner)).apply {
-            setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
-        }
-    }
-
-    /** Kartu dengan garis neon, dipakai untuk kartu perangkat. */
-    private fun neonCard(): LinearLayout {
-        val p = pal()
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = neonFrame(14, p.card)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-            layoutParams = lp(bottom = 16)
-        }
-    }
-
     /** Baris menu atau kontak dengan garis neon: lencana, judul, keterangan, dan panah. */
     private fun neonRow(
         badge: String,
@@ -269,14 +241,12 @@ class MainActivity : FlasherBase() {
                 "pick a folder or .tgz, choose a script, make a plan, then run it")
         ) { openScreen(FlashRomActivity::class.java) }
         root.addView(menuRom)
-        // ADB sideload: hanya tampilan dulu, fiturnya belum dikerjakan
+        // ADB sideload: tidak perlu CEK FASTBOOT, layar itu memeriksa perangkat ADB sendiri
         val menuSdl = neonRow(
             "SDL", p.soft, NeonTheme.MAGENTA,
             "ADB SIDELOAD",
             tr("kirim file .zip dari recovery lewat adb", "send a .zip file from recovery over adb")
-        ) {
-            Toast.makeText(this, tr("Segera hadir", "Coming soon"), Toast.LENGTH_SHORT).show()
-        }
+        ) { startActivity(Intent(this, AdbSideloadActivity::class.java)) }
         root.addView(menuSdl)
 
         lockNote = textLine(
