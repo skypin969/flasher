@@ -34,6 +34,10 @@ class ShellSession(
     private var process: Process? = null
     private var writer: BufferedWriter? = null
 
+    /** Alasan shell gagal dibuka, dipakai untuk pesan di layar. */
+    var lastError: String = ""
+        private set
+
     @Volatile
     private var closing = false
 
@@ -44,10 +48,12 @@ class ShellSession(
         } else {
             listOf("sh")
         }
+        val errors = mutableListOf<String>()
         for (bin in candidates) {
             val proc: Process = try {
                 ProcessBuilder(bin).directory(dir).redirectErrorStream(true).start()
             } catch (e: Exception) {
+                errors.add("$bin (${e.message ?: "gagal"})")
                 continue
             }
             process = proc
@@ -66,6 +72,7 @@ class ShellSession(
             reader.start()
             return true
         }
+        lastError = errors.joinToString(", ")
         return false
     }
 
@@ -104,6 +111,9 @@ class TerminalActivity : FlasherBase() {
     private var rootMode = false
     private var shell: ShellSession? = null
 
+    /** True saat log hanya berisi petunjuk awal, belum ada perintah atau keluaran. */
+    private var showingGreeting = false
+
     private lateinit var termSegNormal: TextView
     private lateinit var termSegRoot: TextView
     private lateinit var termHistoryBtn: TextView
@@ -128,7 +138,7 @@ class TerminalActivity : FlasherBase() {
 
     // ---------- mode dan sesi shell ----------
 
-    /** Menutup sesi lama lalu membuka shell baru untuk mode yang dipilih. */
+    /** Menutup sesi lama, mengosongkan layar, lalu membuka shell untuk mode yang dipilih. */
     private fun switchMode(asRoot: Boolean) {
         closeShell()
         closeHistory()
@@ -137,13 +147,7 @@ class TerminalActivity : FlasherBase() {
         styleSeg(termSegRoot, asRoot)
         termPrompt.text = if (asRoot) "#" else "\$"
         termPrompt.setTextColor(if (asRoot) NeonTheme.MAGENTA else NeonTheme.CYAN)
-
-        val info = if (asRoot) {
-            tr("== mode ROOT ==", "== ROOT mode ==")
-        } else {
-            tr("== mode TANPA ROOT ==", "== NO ROOT mode ==")
-        }
-        appendLog(info, pal().muted)
+        showGreeting()
 
         val s = ShellSession(
             root = asRoot,
@@ -155,10 +159,17 @@ class TerminalActivity : FlasherBase() {
             shell = s
         } else {
             appendLog(
-                tr("Shell tidak bisa dibuka. Untuk mode ROOT, pastikan su tersedia dan izinkan Flashmate di manager root.",
-                    "Shell could not be opened. For ROOT mode, make sure su is available and allow Flashmate in your root manager."),
+                tr("Shell tidak bisa dibuka. Penyebab: ${s.lastError}",
+                    "Shell could not be opened. Cause: ${s.lastError}"),
                 NeonTheme.DANGER
             )
+            if (asRoot) {
+                appendLog(
+                    tr("Pastikan su tersedia dan izinkan Flashmate di manager root.",
+                        "Make sure su is available and allow Flashmate in your root manager."),
+                    NeonTheme.DANGER
+                )
+            }
         }
     }
 
@@ -200,8 +211,32 @@ class TerminalActivity : FlasherBase() {
 
     // ---------- keluaran ----------
 
+    /** Petunjuk awal saat layar kosong, sesuai mode yang aktif. */
+    private fun showGreeting() {
+        val text = if (rootMode) {
+            tr("Flashmate terminal root\nketika perintah su, lalu tekan KIRIM",
+                "Flashmate terminal root\nconnects the su command, then press SEND")
+        } else {
+            tr("Flashmate terminal tanpa root\nketik perintah lalu tekan KIRIM",
+                "Flashmate terminal without root\ntype a command, then press SEND")
+        }
+        val s = SpannableString(text)
+        s.setSpan(ForegroundColorSpan(pal().muted), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        termLog.text = s
+        showingGreeting = true
+    }
+
+    /** Menghapus petunjuk awal begitu ada perintah atau keluaran pertama. */
+    private fun clearGreeting() {
+        if (showingGreeting) {
+            termLog.text = ""
+            showingGreeting = false
+        }
+    }
+
     /** Menambah satu baris keluaran berwarna ke layar terminal. */
     private fun appendLog(text: String, color: Int) {
+        clearGreeting()
         val s = SpannableString(text + "\n")
         s.setSpan(ForegroundColorSpan(color), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         termLog.append(s)
@@ -210,6 +245,7 @@ class TerminalActivity : FlasherBase() {
 
     /** Menambah perintah yang diketik: prompt berwarna, perintah putih. */
     private fun appendCommand(cmd: String) {
+        clearGreeting()
         val mark = if (rootMode) "# " else "\$ "
         val s = SpannableString(mark + cmd + "\n")
         val markColor = if (rootMode) NeonTheme.MAGENTA else NeonTheme.CYAN
@@ -302,21 +338,22 @@ class TerminalActivity : FlasherBase() {
         }
     }
 
+    /** Tombol RIWAYAT: terisi gradasi saat panel riwayat terbuka. */
     private fun styleHistoryBtn(on: Boolean) {
         val p = pal()
-        termHistoryBtn.setTextColor(if (on) p.onAccent else p.muted)
-        termHistoryBtn.background = if (on) neonButtonBackground(this, 999) else rounded(p.card, 999, p.border)
+        termHistoryBtn.setTextColor(if (on) p.onAccent else p.text)
+        termHistoryBtn.background = if (on) neonButtonBackground(this, 999) else neonBorder(999, p.card)
     }
 
     // ---------- tampilan ----------
 
-    /** Tombol kecil berbentuk pil untuk RIWAYAT dan BERSIHKAN. */
+    /** Tombol pil dengan garis neon untuk RIWAYAT dan BERSIHKAN. */
     private fun pillButton(label: String, action: () -> Unit): TextView {
         val p = pal()
-        return textLine(label, 12f, medium = true, color = p.muted, mono = true).apply {
+        return textLine(label, 12f, medium = true, color = p.text, mono = true).apply {
             gravity = Gravity.CENTER
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            background = rounded(p.card, 999, p.border)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = neonBorder(999, p.card)
             setOnClickListener { action() }
         }
     }
@@ -346,23 +383,21 @@ class TerminalActivity : FlasherBase() {
         }
         root.background = neonBackground()
 
-        // Header: tombol kembali dan judul bergradasi neon
+        // Header: "< Kembali" di baris sendiri, lalu judul bergradasi neon
         val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.VERTICAL
         }
-        header.addView(textLine("< " + tr("Kembali", "Back"), 14f, medium = true, color = p.muted).apply {
-            setPadding(0, dp(6), dp(14), dp(6))
+        header.addView(textLine("< " + tr("Kembali", "Back"), 14f, medium = true, color = NeonTheme.CYAN).apply {
+            setPadding(0, dp(6), 0, dp(6))
             setOnClickListener { finish() }
         })
         val title = textLine("TERMINAL", 22f, medium = true, color = p.text).apply {
             paint.isFakeBoldText = true
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         applyNeonText(title)
         header.addView(title)
+        header.addView(caption(tr("jalankan perintah di sini", "run commands here")))
         root.addView(header)
-        root.addView(caption(tr("jalankan perintah di sini", "run commands here")))
 
         // Kartu mode: TANPA ROOT atau ROOT
         val modeCard = neonCard()
@@ -373,8 +408,8 @@ class TerminalActivity : FlasherBase() {
         }
         termSegNormal = modeSeg(tr("TANPA ROOT", "NO ROOT"), false)
         termSegRoot = modeSeg(tr("ROOT", "ROOT"), true)
-        segs.addView(termSegNormal)
-        segs.addView(termSegRoot)
+        segs.addView(termSegNormal, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        segs.addView(termSegRoot, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         modeCard.addView(segs)
         modeCard.addView(textLine(
             tr("mode root memakai su, izinkan dari manager root di perangkat anda.",
@@ -387,28 +422,12 @@ class TerminalActivity : FlasherBase() {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(12) })
 
-        // Kartu layar: alat di atas, lalu keluaran atau panel riwayat
+        // Kotak layar: keluaran, atau panel riwayat saat dibuka
         val logCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = rounded(p.card, 12, p.border)
-            setPadding(dp(10), dp(8), dp(10), dp(10))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            ).apply { topMargin = dp(12) }
+            setPadding(dp(10), dp(8), dp(10), dp(8))
         }
-
-        val toolbar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        termHistoryBtn = pillButton("↑ RIWAYAT") { toggleHistory() }
-        toolbar.addView(termHistoryBtn)
-        toolbar.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
-        toolbar.addView(pillButton(tr("BERSIHKAN", "CLEAR")) { termLog.text = "" })
-        logCard.addView(toolbar)
-
         termLog = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             textSize = 13f
@@ -430,7 +449,7 @@ class TerminalActivity : FlasherBase() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        panelHead.addView(textLine(tr("RIWAYAT PERINTAH", "COMMAND HISTORY"), 12f, medium = true, color = p.text, mono = true).apply {
+        panelHead.addView(textLine(tr("RIWAYAT PERINTAH", "COMMAND HISTORY"), 12f, medium = true, color = NeonTheme.CYAN, mono = true).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         panelHead.addView(textLine("× " + tr("TUTUP", "CLOSE"), 12f, medium = true, color = p.muted, mono = true).apply {
@@ -451,16 +470,31 @@ class TerminalActivity : FlasherBase() {
 
         logCard.addView(termScroll)
         logCard.addView(termHistoryPanel)
-        root.addView(logCard)
+        root.addView(logCard, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f
+        ).apply { topMargin = dp(12) })
+
+        // Baris tombol di bawah kotak layar: RIWAYAT dan BERSIHKAN
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        termHistoryBtn = pillButton("↑ RIWAYAT") { toggleHistory() }
+        toolbar.addView(termHistoryBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            rightMargin = dp(8)
+        })
+        toolbar.addView(pillButton(tr("BERSIHKAN", "CLEAR")) { showGreeting() },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(toolbar, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(10) })
 
         // Baris input: prompt, kolom perintah, dan KIRIM
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
         }
         termPrompt = textLine("\$", 16f, medium = true, color = NeonTheme.CYAN, mono = true).apply {
             setPadding(0, 0, dp(8), 0)
@@ -498,7 +532,10 @@ class TerminalActivity : FlasherBase() {
             ).apply { leftMargin = dp(8) }
             setOnClickListener { onSend() }
         })
-        root.addView(inputRow)
+        root.addView(inputRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(10) })
 
         setContentView(root)
         styleHistoryBtn(false)
