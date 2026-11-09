@@ -93,6 +93,8 @@ class AdbSideloadActivity : FlasherBase() {
             "3. connect the cable, tap the \"Charging this device\" notification, then choose Reverse charging")))
         guideCard.addView(stepLine(tr("4. kembali ke sini, tekan CEK ADB SIDELOAD, lalu KIRIM",
             "4. come back here, press CHECK ADB SIDELOAD, then SEND")))
+        // Jarak kartu petunjuk ke judul "file zip" dibuat lebih rapat, supaya blok zip naik sedikit
+        guideCard.layoutParams = lp(bottom = 4)
         root.addView(guideCard)
 
         // Status, tampil sesudah kirim
