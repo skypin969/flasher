@@ -365,6 +365,9 @@ abstract class FlasherBase : Activity() {
         }
         busy = true
         log("== $name ==")
+        // Penanda untuk modul SAVER: flash sedang berjalan, jangan kunci layar atau hentikan proses
+        val marker = java.io.File(filesDir, "busy")
+        runCatching { marker.createNewFile() }
         worker.execute {
             try {
                 task()
@@ -378,6 +381,7 @@ abstract class FlasherBase : Activity() {
                 log("ERROR: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 busy = false
+                runCatching { marker.delete() }
             }
         }
     }
