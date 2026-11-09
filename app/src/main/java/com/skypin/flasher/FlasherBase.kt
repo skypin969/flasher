@@ -322,6 +322,30 @@ abstract class FlasherBase : Activity() {
         }
     }
 
+    /** Baris status yang diganti di tempat, misalnya persentase kirim dan penghitung waktu. Selalu berada di bawah log. */
+    private var statusText: String? = null
+
+    protected fun logStatus(msg: String) {
+        runOnUiThread {
+            val tv = logView
+            if (tv == null) {
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            } else {
+                val full = tv.text.toString()
+                val old = statusText
+                val base = if (old != null && full.endsWith(old + "\n")) full.removeSuffix(old + "\n") else full
+                tv.text = base + msg + "\n"
+                statusText = msg
+                logScroll?.post { logScroll?.fullScroll(View.FOCUS_DOWN) }
+            }
+        }
+    }
+
+    /** Berhenti mengganti baris status. Baris yang terakhir tampil tetap ada di log. */
+    protected fun clearStatus() {
+        runOnUiThread { statusText = null }
+    }
+
     protected fun alert(msg: String) {
         AlertDialog.Builder(this).setMessage(msg).setPositiveButton("OK", null).show()
     }
