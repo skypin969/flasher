@@ -12,6 +12,7 @@ import android.widget.TextView
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
+import java.util.Locale
 
 /** Layar ADB SIDELOAD: kirim satu file zip ke HP target yang ada di recovery (Apply from ADB). */
 class AdbSideloadActivity : FlasherBase() {
@@ -20,6 +21,9 @@ class AdbSideloadActivity : FlasherBase() {
     private var zipName = ""
     private var zipSize = 0L
 
+    /** Codename dari pesan koneksi ADB. Kosong jika tidak terbaca. */
+    @Volatile private var peerCodename = ""
+
     /** false = sebelum kirim, true = sesudah kirim. */
     private var sent = false
 
@@ -27,6 +31,7 @@ class AdbSideloadActivity : FlasherBase() {
     private lateinit var guideTitle: TextView
     private lateinit var guideCard: LinearLayout
     private lateinit var statusCard: LinearLayout
+    private lateinit var statusNote: TextView
     private lateinit var fileLabel: TextView
     private lateinit var pickTop: Button
     private lateinit var fileCard: LinearLayout
@@ -62,27 +67,30 @@ class AdbSideloadActivity : FlasherBase() {
 
         root.addView(backButton { onBack() })
         root.addView(textLine("ADB SIDELOAD", 22f, medium = true, color = p.text).apply {
-            setPadding(0, dp(4), 0, dp(2))
+            setPadding(0, dp(4), 0, 0)
         })
-        deviceLine = textLine("", 13f, color = p.muted)
+        root.addView(textLine(
+            tr("kirim file .zip dari recovery lewat adb", "send a .zip file from recovery over adb"),
+            13f,
+            color = p.muted
+        ))
+        deviceLine = textLine("", 14f, color = p.sec).apply {
+            setPadding(0, dp(8), 0, dp(4))
+        }
         root.addView(deviceLine)
 
         // Petunjuk, tampil sebelum kirim
-        guideCard = box()
+        guideCard = neonCard()
         guideTitle = textLine("", 12f, color = p.muted)
         guideCard.addView(guideTitle)
-        guideCard.addView(textLine(
-            tr("1. masuk recovery dengan volume atas + power", "1. enter recovery with volume up + power"),
-            14f
-        ).apply { setPadding(0, dp(6), 0, 0) })
-        guideCard.addView(textLine(
-            tr("2. pilih Apply update → Apply from ADB", "2. choose Apply update → Apply from ADB"),
-            14f
-        ).apply { setPadding(0, dp(6), 0, 0) })
-        guideCard.addView(textLine(
-            tr("3. kembali ke sini, lalu tekan KIRIM", "3. come back here, then press SEND"),
-            14f
-        ).apply { setPadding(0, dp(6), 0, 0) })
+        guideCard.addView(stepLine(tr("1. masuk recovery dengan volume atas + power",
+            "1. enter recovery with volume up + power")))
+        guideCard.addView(stepLine(tr("2. pilih Apply update → Apply from ADB",
+            "2. choose Apply update → Apply from ADB")))
+        guideCard.addView(stepLine(tr("3. pasang kabel, ketuk notifikasi \"Mengisi daya perangkat ini\", lalu pilih Pengisian daya terbalik",
+            "3. connect the cable, tap the \"Charging this device\" notification, then choose Reverse charging")))
+        guideCard.addView(stepLine(tr("4. kembali ke sini, tekan CEK ADB SIDELOAD, lalu KIRIM",
+            "4. come back here, press CHECK ADB SIDELOAD, then SEND")))
         root.addView(guideCard)
 
         // Status, tampil sesudah kirim
@@ -91,7 +99,7 @@ class AdbSideloadActivity : FlasherBase() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        statusTop.addView(textLine(tr("Status", "Status"), 12f, color = p.muted).apply {
+        statusTop.addView(textLine(tr("zip terkirim", "zip sent"), 15f, medium = true).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         statusTop.addView(textLine(tr("Selesai", "Done"), 11f, color = p.okText).apply {
@@ -99,30 +107,28 @@ class AdbSideloadActivity : FlasherBase() {
             background = rounded(p.ok, 999, null)
         })
         statusCard.addView(statusTop)
-        statusCard.addView(textLine(tr("zip terkirim", "zip sent"), 16f, medium = true).apply {
-            setPadding(0, dp(8), 0, dp(8))
-        })
         statusCard.addView(
             View(this).apply {
                 background = neonButtonBackground(this@AdbSideloadActivity, 999)
             },
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(8))
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(6)).apply {
+                topMargin = dp(12)
+                bottomMargin = dp(12)
+            }
         )
-        statusCard.addView(textLine(
-            tr("di recovery, pilih Reboot system. untuk Google apps, lanjut kirim MindTheGapps.",
-                "in recovery, choose Reboot system. for Google apps, send MindTheGapps next."),
-            12f,
-            color = p.sec
-        ).apply { setPadding(0, dp(8), 0, 0) })
+        statusNote = textLine("", 13f, color = p.sec)
+        statusCard.addView(statusNote)
         root.addView(statusCard)
 
-        // Pilih file, sebelum kirim
+        // Pilih file
         fileLabel = caption(tr("file zip", "zip file"))
         root.addView(fileLabel)
         pickTop = neonOutlineBtn(tr("PILIH FILE ZIP", "PICK ZIP FILE")) { pickZip() }
         root.addView(pickTop)
 
+        // Jarak 10 dp dari tombol di atasnya supaya tidak menempel
         fileCard = box()
+        fileCard.layoutParams = lp(top = 10)
         fileNameLine = textLine("", 14f, medium = true)
         fileStateLine = textLine("", 12f, color = p.muted).apply { setPadding(0, dp(4), 0, 0) }
         fileCard.addView(fileNameLine)
@@ -150,17 +156,22 @@ class AdbSideloadActivity : FlasherBase() {
         setContentView(root)
     }
 
+    private fun stepLine(s: String): TextView = textLine(s, 14f).apply {
+        setPadding(0, dp(6), 0, 0)
+    }
+
     /** Menampilkan bagian sebelum kirim atau sesudah kirim, sesuai keadaan [sent]. */
     private fun applyState() {
+        val p = pal()
         val done = sent
         guideCard.visibility = if (done) View.GONE else View.VISIBLE
         statusCard.visibility = if (done) View.VISIBLE else View.GONE
-        fileLabel.visibility = if (done) View.GONE else View.VISIBLE
         pickTop.visibility = if (done) View.GONE else View.VISIBLE
         pickBottom.visibility = if (done) View.VISIBLE else View.GONE
         sendRow.visibility = if (done) View.GONE else View.VISIBLE
         fileNameLine.text = if (zipUri == null) tr("belum ada file dipilih", "no file picked yet") else zipName
         fileStateLine.text = if (done) tr("terkirim", "sent") else tr("belum dikirim", "not sent yet")
+        fileStateLine.setTextColor(if (done) p.accent else p.muted)
     }
 
     private fun setSent(done: Boolean) {
@@ -168,16 +179,27 @@ class AdbSideloadActivity : FlasherBase() {
         applyState()
     }
 
-    /** Nama perangkat dari USB. Jika nama tidak terbaca, tampil "perangkat ADB terdeteksi". */
-    private fun refreshDevice() {
-        val name = adbDeviceName()
-        deviceLine.text = when {
-            name == null -> tr("belum ada perangkat ADB", "no ADB device yet")
-            name.isBlank() -> tr("perangkat ADB terdeteksi", "ADB device detected")
-            else -> name
+    /**
+     * Nama untuk pesan dan tampilan: nama dari USB, ditambah codename jika terbaca.
+     * Jika keduanya tidak terbaca, tulisannya "perangkat".
+     */
+    private fun deviceLabel(): String {
+        val usbName = adbDeviceName()?.takeIf { it.isNotBlank() }
+        val codename = peerCodename.takeIf { it.isNotBlank() }
+        return when {
+            usbName != null && codename != null ->
+                if (usbName.contains(codename, ignoreCase = true)) usbName else "$usbName · $codename"
+            usbName != null -> usbName
+            codename != null -> codename
+            else -> tr("perangkat", "device")
         }
-        val label = if (name.isNullOrBlank()) tr("HP target", "target phone") else name
-        guideTitle.text = tr("langkah di ", "steps on ") + label
+    }
+
+    private fun refreshDevice() {
+        val deviceFound = adbDeviceName() != null
+        if (!deviceFound) peerCodename = ""
+        deviceLine.text = if (deviceFound) deviceLabel() else tr("belum ada perangkat ADB", "no ADB device yet")
+        guideTitle.text = tr("langkah di ", "steps on ") + deviceLabel()
     }
 
     private fun pickZip() {
@@ -211,7 +233,11 @@ class AdbSideloadActivity : FlasherBase() {
 
     private fun onCheck() {
         runTask(tr("CEK ADB SIDELOAD", "CHECK ADB SIDELOAD")) {
-            withAdb(retryOnPermission = { onCheck() }) { adb -> adb.connect() }
+            withAdb(retryOnPermission = { onCheck() }) { adb ->
+                adb.connect()
+                peerCodename = adb.codename
+            }
+            runOnUiThread { refreshDevice() }
             log(tr("Perangkat ADB siap. Pilih zip, lalu tekan KIRIM.", "ADB device is ready. Pick a zip, then press SEND."))
         }
     }
@@ -226,27 +252,64 @@ class AdbSideloadActivity : FlasherBase() {
         }
         runTask(tr("KIRIM ZIP", "SEND ZIP")) {
             log("[1/1] " + tr("kirim", "send") + " " + name)
-            var lastPct = -1
-            withAdb(retryOnPermission = { onSend() }) { adb ->
-                val pfd = contentResolver.openFileDescriptor(uri, "r")
-                    ?: throw AdbException(tr("Gagal membuka file zip.", "Failed to open the zip file."))
-                pfd.use { fd ->
-                    val ch = FileInputStream(fd.fileDescriptor).channel
-                    adb.sideload(size, { off, dst, len -> readAt(ch, off, dst, len) }) { sentBytes ->
-                        val pct = (sentBytes * 100 / size).toInt()
-                        if (pct >= lastPct + 5 || (pct == 100 && lastPct != 100)) {
-                            lastPct = pct
-                            log(tr("kirim $pct%", "send $pct%"))
+            var waitShown = false
+            try {
+                withAdb(retryOnPermission = { onSend() }) { adb ->
+                    adb.connect()
+                    peerCodename = adb.codename
+                    runOnUiThread { refreshDevice() }
+                    val label = deviceLabel()
+                    logStatus(tr("Proses mengirim file ke $label", "Sending the file to $label"))
+
+                    val pfd = contentResolver.openFileDescriptor(uri, "r")
+                        ?: throw AdbException(tr("Gagal membuka file zip.", "Failed to open the zip file."))
+                    pfd.use { fd ->
+                        val ch = FileInputStream(fd.fileDescriptor).channel
+                        adb.sideload(size, { off, dst, len -> readAt(ch, off, dst, len) }) { sentBytes ->
+                            // Tanpa persen. Setelah blok terakhir terkirim, tampilkan tahap menunggu Poco
+                            if (sentBytes >= size && !waitShown) {
+                                waitShown = true
+                                logStatus(tr("menunggu $label memproses file...", "waiting for $label to process the file..."))
+                            }
                         }
                     }
+
+                    // Perangkat sudah memberi tanda selesai. Pemasangan berhasil atau tidak hanya terlihat di layar perangkat
+                    logStatus(
+                        tr("Proses sedang berjalan, lihat di layar $label, tunggu sampai ada tulisan \"Install completed with status 0\"",
+                            "Running. Check the $label screen and wait for the text \"Install completed with status 0\"")
+                    )
                 }
+            } finally {
+                clearStatus()
             }
-            // Recovery selalu memberi tanda selesai, walau pemasangan gagal. Hasil pemasangan dilihat di Poco.
-            log(
-                tr("transfer selesai. lihat hasil pemasangan di layar Poco.",
-                    "transfer finished. check the install result on the Poco screen.")
+            val note = noteFor(name)
+            runOnUiThread {
+                statusNote.text = note
+                setSent(true)
+            }
+        }
+    }
+
+    /**
+     * Teks kartu status sesudah zip terkirim, sesuai cara flashing masing-masing ROM.
+     * Jenisnya dilihat dari nama file zip: mindthegapps, gapps (GApps bawaan), atau lainnya (GApps terpisah).
+     */
+    private fun noteFor(file: String): String {
+        val f = file.lowercase(Locale.ROOT)
+        return when {
+            f.contains("mindthegapps") -> tr(
+                "Pilih Reboot system now.",
+                "Choose Reboot system now."
             )
-            runOnUiThread { setSent(true) }
+            f.contains("gapps") -> tr(
+                "Jika ditanya install paket tambahan, pilih No.\nLalu pilih Reboot system now.",
+                "If asked to install additional packages, choose No.\nThen choose Reboot system now."
+            )
+            else -> tr(
+                "Jika ditanya install paket tambahan, pilih No.\nUntuk Google apps, pilih Advanced → Reboot to recovery, lalu kirim MindTheGapps.\nTanpa Google apps, pilih Reboot system now.",
+                "If asked to install additional packages, choose No.\nFor Google apps, choose Advanced → Reboot to recovery, then send MindTheGapps.\nWithout Google apps, choose Reboot system now."
+            )
         }
     }
 
