@@ -548,7 +548,7 @@ abstract class FlasherBase : Activity() {
         }
 
     /** Garis pinggir gradasi neon dengan isi [fill]. Dipakai kartu, baris menu, dan tombol garis neon. */
-    protected fun neonFrame(radiusDp: Int, fill: Int): LayerDrawable {
+    protected fun neonBorder(radiusDp: Int, fill: Int): LayerDrawable {
         val outer = GradientDrawable(
             GradientDrawable.Orientation.LEFT_RIGHT,
             intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
@@ -582,7 +582,7 @@ abstract class FlasherBase : Activity() {
         val p = pal()
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = neonFrame(14, p.card)
+            background = neonBorder(14, p.card)
             setPadding(dp(14), dp(14), dp(14), dp(14))
             layoutParams = lp(bottom = 16)
         }
@@ -651,7 +651,7 @@ abstract class FlasherBase : Activity() {
             textSize = 14f
             typeface = Fonts.medium
             setTextColor(p.text)
-            background = neonFrame(10, p.card)
+            background = neonBorder(10, p.card)
             stateListAnimator = null
             minimumHeight = dp(44)
             setPadding(dp(12), dp(8), dp(12), dp(8))
