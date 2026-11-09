@@ -1,20 +1,24 @@
 package com.skypin.flasher
 
 import android.app.Dialog
+import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Shader
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
-import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import java.io.File
 import java.io.IOException
@@ -30,7 +34,7 @@ class FlashRomActivity : FlasherBase() {
 
     private lateinit var romInfo: TextView
     private lateinit var scriptBtn: TextView
-    private lateinit var dryRunSwitch: Switch
+    private lateinit var dryRunSwitch: NeonToggle
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,7 +94,7 @@ class FlashRomActivity : FlasherBase() {
         }
         runOnUiThread {
             romInfo.text = msg
-            scriptBtn.text = tr("Pilih script", "Choose script")
+            scriptBtn.text = tr("PILIH SCRIPT", "CHOOSE SCRIPT")
             applyNeonText(scriptBtn)
         }
         log(msg.replace("\n", " | "))
@@ -226,49 +230,6 @@ class FlashRomActivity : FlasherBase() {
         }
     }
 
-    /** Saklar Mode uji: aktif terisi gradasi, tidak aktif garis gradasi dengan isi gelap. */
-    private fun neonToggleTrack(): StateListDrawable {
-        val p = pal()
-        val gradient = intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
-        val on = InsetDrawable(
-            GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, gradient).apply {
-                cornerRadius = dp(12).toFloat()
-                setSize(dp(46), dp(24))
-            },
-            dp(3)
-        )
-        val offOuter = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, gradient).apply {
-            cornerRadius = dp(12).toFloat()
-            setSize(dp(46), dp(24))
-        }
-        val offInner = GradientDrawable().apply {
-            setColor(p.card)
-            cornerRadius = dp(10).toFloat()
-        }
-        val off = InsetDrawable(
-            LayerDrawable(arrayOf(offOuter, offInner)).apply {
-                setLayerInset(1, dp(2), dp(2), dp(2), dp(2))
-            },
-            dp(3)
-        )
-        return StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_checked), on)
-            addState(intArrayOf(), off)
-        }
-    }
-
-    private fun neonToggleThumb(): StateListDrawable {
-        fun dot(color: Int) = GradientDrawable().apply {
-            setShape(GradientDrawable.OVAL)
-            setColor(color)
-            setSize(dp(24), dp(24))
-        }
-        return StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_checked), dot(Color.WHITE))
-            addState(intArrayOf(), dot(NeonTheme.MUTED))
-        }
-    }
-
     private fun buildUi() {
         val p = pal()
         val content = LinearLayout(this).apply {
@@ -290,7 +251,7 @@ class FlashRomActivity : FlasherBase() {
         val form = box()
 
         val step1 = subCard()
-        step1.addView(caption(tr("Sebelum pilih folder, ekstrak dulu file fastboot.tgz",
+        step1.addView(caption(tr("sebelum pilih folder, ekstrak dulu file fastboot.tgz",
             "Before choosing a folder, extract fastboot.tgz first")))
         val bFolder = neonOutline(tr("PILIH FOLDER", "CHOOSE FOLDER")) { pickRomFolder() }
         bFolder.layoutParams = LinearLayout.LayoutParams(
@@ -298,7 +259,7 @@ class FlashRomActivity : FlasherBase() {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(8) }
         step1.addView(bFolder)
-        romInfo = textLine(tr("Belum ada paket ROM dipilih", "No ROM package chosen yet"), 12f, color = p.muted, mono = true)
+        romInfo = textLine(tr("belum ada paket rom dipilih", "No ROM package chosen yet"), 12f, color = p.muted, mono = true)
         romInfo.setPadding(0, dp(8), 0, 0)
         step1.addView(romInfo)
         form.addView(step1)
@@ -311,7 +272,7 @@ class FlashRomActivity : FlasherBase() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         })
-        scriptBtn = neonOutline(tr("Pilih script", "Choose script")) { pickScript() }
+        scriptBtn = neonOutline(tr("PILIH SCRIPT", "CHOOSE SCRIPT")) { pickScript() }
         scriptBtn.layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
@@ -336,10 +297,8 @@ class FlashRomActivity : FlasherBase() {
         modeText.addView(textLine(tr("Mode Uji", "Test Mode"), 14f, medium = true, color = p.text))
         modeText.addView(textLine(tr("tidak mengirim data", "sends no data"), 12f, color = p.muted))
         modeRow.addView(modeText)
-        dryRunSwitch = Switch(this).apply {
+        dryRunSwitch = NeonToggle(this).apply {
             isChecked = true
-            setTrackDrawable(neonToggleTrack())
-            setThumbDrawable(neonToggleThumb())
         }
         modeRow.addView(dryRunSwitch)
         form.addView(modeRow)
@@ -347,7 +306,7 @@ class FlashRomActivity : FlasherBase() {
         val warn = box()
         warn.background = rounded(p.warnBg, 10, null)
         warn.addView(textLine(
-            tr("Saat proses flashing ROM berjalan, layar tidak boleh sampai mati atau mengunci layar.",
+            tr("saat proses flashing rom berjalan, layar tidak boleh sampai mati atau mengunci layar.",
                 "While ROM flashing is running, the screen must not turn off or lock."),
             12f,
             color = p.warnText
@@ -358,5 +317,65 @@ class FlashRomActivity : FlasherBase() {
         content.addView(form)
 
         setContentView(page(ScrollView(this).apply { addView(content) }, makeLog()))
+    }
+}
+
+/** Saklar Mode uji yang digambar sendiri: jalur pill, bulatan selalu bulat sempurna. */
+class NeonToggle(context: Context) : View(context) {
+
+    var isChecked: Boolean = true
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    private val density = context.resources.displayMetrics.density
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val checkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeWidth = 2f * density
+    }
+
+    init {
+        isClickable = true
+        setOnClickListener { isChecked = !isChecked }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension((52 * density).toInt(), (28 * density).toInt())
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val r = h / 2f
+        val cy = h / 2f
+        val pad = 3f * density
+        val knobR = r - pad
+        val gradient = intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
+
+        paint.shader = LinearGradient(0f, 0f, w, 0f, gradient, null, Shader.TileMode.CLAMP)
+        canvas.drawRoundRect(0f, 0f, w, h, r, r, paint)
+        paint.shader = null
+
+        if (isChecked) {
+            paint.color = Color.WHITE
+            val cx = w - pad - knobR
+            canvas.drawCircle(cx, cy, knobR, paint)
+            checkPaint.color = pal().onAccent
+            val check = Path().apply {
+                moveTo(cx - knobR * 0.35f, cy)
+                lineTo(cx - knobR * 0.05f, cy + knobR * 0.3f)
+                lineTo(cx + knobR * 0.4f, cy - knobR * 0.35f)
+            }
+            canvas.drawPath(check, checkPaint)
+        } else {
+            val ring = 1.5f * density
+            paint.color = pal().card
+            canvas.drawRoundRect(ring, ring, w - ring, h - ring, r - ring, r - ring, paint)
+            paint.color = pal().muted
+            canvas.drawCircle(pad + knobR, cy, knobR, paint)
+        }
     }
 }
