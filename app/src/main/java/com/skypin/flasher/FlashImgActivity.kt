@@ -185,7 +185,9 @@ class FlashImgActivity : FlasherBase() {
 
         backBtn = backButton { finish() }
         content.addView(backBtn)
-        content.addView(textLine(tr("FLASH FILE IMG", "FLASH IMG FILE"), 22f, medium = true, color = p.text).apply {
+        content.addView(textLine(tr("FLASH FILE IMG", "FLASH IMG FILE"), 22f, medium = true).apply {
+            paint.isFakeBoldText = true
+            applyNeonText(this)
             setPadding(0, dp(8), 0, 0)
         })
         val tgt = Session.target
