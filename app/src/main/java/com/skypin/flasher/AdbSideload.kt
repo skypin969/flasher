@@ -25,6 +25,9 @@ private const val ADB_LOCAL_ID = 1
 
 /** Ukuran blok sideload, sama dengan adb resmi (64 KB). */
 private const val SIDE_BLOCK = 64 * 1024
+
+/** Batas tunggu pesan dari perangkat selama sideload. Setelah blok terakhir, Poco memverifikasi zip dulu dan bisa diam beberapa menit. */
+private const val SIDE_WAIT_TIMEOUT = 30 * 60 * 1000
 private val ADB_HOST_BANNER = "host::\u0000".toByteArray(Charsets.US_ASCII)
 private val ADB_NO_DATA = ByteArray(0)
 
@@ -43,6 +46,11 @@ class AdbSideload(private val conn: UsbDeviceConnection, private val iface: UsbI
     private val scratch = ByteArray(CHUNK)
     private val queue = java.util.ArrayDeque<Msg>()
     private var peerMaxData = 4096
+    private var connected = false
+
+    /** Codename perangkat dari pesan koneksi. Kosong jika pesan tidak memuatnya. */
+    var codename = ""
+        private set
 
     init {
         var i: UsbEndpoint? = null
@@ -71,7 +79,7 @@ class AdbSideload(private val conn: UsbDeviceConnection, private val iface: UsbI
         conn.close()
     }
 
-    /** Jabat tangan awal: kirim CNXN lalu tunggu balasan. Tidak mengirim data apa pun. */
+    /** Jabat tangan awal: kirim CNXN lalu tunggu balasan. Tidak mengirim data apa pun. Codename dibaca dari balasan. */
     fun connect() {
         queue.clear()
         writeMsg(ADB_CNXN, ADB_VERSION, ADB_HOST_MAX, ADB_HOST_BANNER, 0, ADB_HOST_BANNER.size)
@@ -79,6 +87,8 @@ class AdbSideload(private val conn: UsbDeviceConnection, private val iface: UsbI
             val m = readMsg(READ_TIMEOUT)
             if (m.cmd == ADB_CNXN) {
                 peerMaxData = if (m.arg1 > 0) m.arg1 else 4096
+                codename = codenameFrom(String(m.data, Charsets.US_ASCII))
+                connected = true
                 return
             }
             if (m.cmd == ADB_AUTH) {
@@ -93,7 +103,7 @@ class AdbSideload(private val conn: UsbDeviceConnection, private val iface: UsbI
     /**
      * Mengirim file berukuran [size] ke recovery.
      * [readAt] membaca [len] byte mulai dari [offset] file ke [dst], lalu mengembalikan jumlah byte yang terbaca.
-     * [onProgress] dipanggil dengan jumlah byte yang sudah terkirim.
+     * [onProgress] dipanggil dengan jumlah byte yang sudah terkirim. Jika [connect] belum dipanggil, fungsi ini memanggilnya sendiri.
      */
     fun sideload(size: Long, readAt: (Long, ByteArray, Int) -> Int, onProgress: (Long) -> Unit) {
         if (size <= 0L || size > Int.MAX_VALUE) {
@@ -102,11 +112,11 @@ class AdbSideload(private val conn: UsbDeviceConnection, private val iface: UsbI
                     "Zip size is not supported (1 byte to 2 GB).")
             )
         }
-        connect()
+        if (!connected) connect()
         val remoteId = openService(size)
         val block = ByteArray(SIDE_BLOCK)
         while (true) {
-            val m = readMsg(DATA_TIMEOUT)
+            val m = readMsg(SIDE_WAIT_TIMEOUT)
             when (m.cmd) {
                 ADB_WRTE -> {
                     // Setiap pesan dari perangkat harus dibalas OKAY
@@ -147,6 +157,17 @@ class AdbSideload(private val conn: UsbDeviceConnection, private val iface: UsbI
                 else -> Unit
             }
         }
+    }
+
+    /** Mengambil codename dari teks pesan koneksi, misalnya "device::ro.product.device=malachite;...". */
+    private fun codenameFrom(banner: String): String {
+        val props = banner.substringAfter("::", banner).split(';')
+        for (key in listOf("ro.product.device", "ro.product.name")) {
+            val raw = props.firstOrNull { it.startsWith("$key=") }?.substringAfter('=') ?: ""
+            val value = raw.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(32)
+            if (value.isNotBlank()) return value
+        }
+        return ""
     }
 
     /** Membuka layanan sideload-host. Mengembalikan id perangkat untuk pesan berikutnya. */
