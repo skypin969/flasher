@@ -35,6 +35,8 @@ class FlashRomActivity : FlasherBase() {
     @Volatile private var romScript: String? = null
     /** True jika pemeriksaan menemukan file korup atau hilang. JALANKAN dimatikan. */
     @Volatile private var checkBlocked = false
+    /** True jika rencana (mode uji atau flash asli) menemukan kesalahan. JALANKAN dimatikan sampai folder dipilih lagi. */
+    @Volatile private var planBlocked = false
     /** True setelah halaman ditutup, supaya pemeriksaan yang sedang berjalan berhenti. */
     @Volatile private var closing = false
 
@@ -64,9 +66,9 @@ class FlashRomActivity : FlasherBase() {
         refreshUjiLabel()
     }
 
-    /** Tulisan MODE UJI selalu tampil, sebagai penanda bahwa tombol di sebelahnya adalah pengaturan mode uji. */
+    /** Tulisan MODE UJI di samping tombol pojok kanan atas hanya tampil saat mode uji aktif. */
     private fun refreshUjiLabel() {
-        ujiLabel.visibility = View.VISIBLE
+        ujiLabel.visibility = if (FlashSettings.dryRun(this)) View.VISIBLE else View.INVISIBLE
     }
 
     /**
@@ -175,6 +177,7 @@ class FlashRomActivity : FlasherBase() {
         romName = name
         romScript = script
         checkBlocked = false
+        planBlocked = false
         val msg = if (script == null) {
             tr("Paket: $name\nTidak ada script flash (flash_all.sh) di paket ini.",
                 "Package: $name\nNo flash script (flash_all.sh) in this package.")
@@ -348,6 +351,11 @@ class FlashRomActivity : FlasherBase() {
                 "This package has corrupt or missing files. Extract the .tgz again, then choose the folder again."))
             return
         }
+        if (planBlocked) {
+            alert(tr("Mode uji menemukan kesalahan di paket ini, jadi JALANKAN dimatikan. Baca isi log, lalu pilih folder ROM lagi.",
+                "Test mode found errors in this package, so RUN is turned off. Read the log, then choose the ROM folder again."))
+            return
+        }
         val dry = FlashSettings.dryRun(this)
         val msg = if (dry) {
             tr("Mode uji: tidak ada data yang dikirim ke perangkat. Lanjutkan?",
@@ -364,7 +372,13 @@ class FlashRomActivity : FlasherBase() {
                     val now = readDevice(fb)
                     ensureSameDevice(now, t)
                     val p = buildPlan(src, script, now, romName)
-                    if (p.errors.isNotEmpty()) throw FastbootException(p.errors.joinToString("; "))
+                    if (p.errors.isNotEmpty()) {
+                        // Rencana tidak boleh jalan: catat alasannya, lalu matikan JALANKAN sampai folder dipilih lagi
+                        log(describePlan(p, src))
+                        planBlocked = true
+                        runOnUiThread { setRunEnabled(false) }
+                        throw FastbootException(p.errors.joinToString("; "))
+                    }
                     log(describePlan(p, src))
                     runPlan(fb, src, p, dry) { m -> log(m) }
                 }
@@ -557,7 +571,7 @@ class FlashRomActivity : FlasherBase() {
             color = p.warnText
         ))
         warn.addView(textLine(
-            tr("saat flashing berjalan, layar tidak boleh mati atau terkunci, dan jangan menekan tombol apapun.",
+            tr("saat flashing berjalan, layar tidak boleh mati atau terkunci.",
                 "while flashing is running, the screen must not turn off or lock."),
             12f,
             color = p.warnText
