@@ -21,23 +21,43 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Halaman Flash fastboot ROM: pilih folder paket ROM yang sudah diekstrak, script flash_all.sh dipilih otomatis, lalu jalankan. */
+/**
+ * Halaman Flash fastboot ROM: pilih folder paket ROM yang sudah diekstrak, script flash_all.sh dipilih otomatis,
+ * isi file diperiksa otomatis, lalu jalankan.
+ */
 class FlashRomActivity : FlasherBase() {
 
     @Volatile private var romSource: RomSource? = null
     @Volatile private var romName = ""
     /** "flash_all.sh" jika ada di paket. Null jika tidak ada. */
     @Volatile private var romScript: String? = null
+    /** True jika pemeriksaan menemukan file korup atau hilang. JALANKAN dimatikan. */
+    @Volatile private var checkBlocked = false
+    /** True setelah halaman ditutup, supaya pemeriksaan yang sedang berjalan berhenti. */
+    @Volatile private var closing = false
 
     private lateinit var romInfo: TextView
     private lateinit var missingText: TextView
     private lateinit var scriptRow: LinearLayout
     private lateinit var runBtn: Button
+    private lateinit var checkCard: LinearLayout
+    private lateinit var progressBox: LinearLayout
+    private lateinit var progressHead: TextView
+    private lateinit var progressBar: LinearLayout
+    private lateinit var progressFill: View
+    private lateinit var progressRest: View
+    private lateinit var progressDetail: TextView
+    private lateinit var resultBox: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         buildUi()
+    }
+
+    override fun onDestroy() {
+        closing = true
+        super.onDestroy()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -53,14 +73,18 @@ class FlashRomActivity : FlasherBase() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_PICK_TREE)
     }
 
+    /** Baca folder, pilih script, lalu langsung periksa isi file. */
     private fun loadRomFolder(tree: Uri) {
-        runTask(tr("Baca folder ROM", "Read ROM folder")) {
+        runTask(tr("Baca dan periksa folder ROM", "Read and check ROM folder")) {
             runCatching { contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            setRom(SafRomSource(contentResolver, tree), tree.lastPathSegment ?: "folder")
+            val src = SafRomSource(contentResolver, tree)
+            setRom(src, tree.lastPathSegment ?: "folder")
+            val script = romScript
+            if (script != null) checkRom(src, script)
         }
     }
 
-    /** Memilih flash_all.sh otomatis. Jika tidak ada, tampilkan pesan dan JALANKAN dimatikan. */
+    /** Memilih flash_all.sh otomatis. JALANKAN tetap mati sampai pemeriksaan file selesai. */
     private fun setRom(src: RomSource, name: String) {
         // Script flash_all_except_data_storage.sh tidak dipakai di aplikasi ini, jadi disembunyikan
         val scripts = listScripts(src).filter { it != "flash_all_except_data_storage.sh" }
@@ -68,6 +92,7 @@ class FlashRomActivity : FlasherBase() {
         romSource = src
         romName = name
         romScript = script
+        checkBlocked = false
         val msg = if (script == null) {
             tr("Paket: $name\nTidak ada script flash (flash_all.sh) di paket ini.",
                 "Package: $name\nNo flash script (flash_all.sh) in this package.")
@@ -79,10 +104,135 @@ class FlashRomActivity : FlasherBase() {
             romInfo.text = tr("Paket: $name", "Package: $name")
             missingText.visibility = if (script == null) View.VISIBLE else View.GONE
             scriptRow.visibility = if (script != null) View.VISIBLE else View.GONE
-            runBtn.isEnabled = script != null
-            runBtn.alpha = if (script != null) 1f else 0.4f
+            setRunEnabled(false)
+            if (script == null) {
+                checkCard.visibility = View.GONE
+            } else {
+                checkCard.visibility = View.VISIBLE
+                resultBox.visibility = View.GONE
+                progressBox.visibility = View.VISIBLE
+                progressHead.text = tr("memeriksa file", "checking files")
+                progressDetail.text = ""
+                setProgress(0)
+            }
         }
         log(msg.replace("\n", " | "))
+    }
+
+    /** Memeriksa isi semua file paket dengan daftar pembanding dari paket itu sendiri. Dipanggil di dalam tugas latar. */
+    private fun checkRom(src: RomSource, script: String) {
+        log(tr("Periksa file ROM. Ini bisa memakan waktu beberapa menit.",
+            "Checking ROM files. This can take a few minutes."))
+        val result = try {
+            verifyRom(src, script, { closing }, { pr -> runOnUiThread { showProgress(pr) } }) { m -> log(m) }
+        } catch (e: CheckCancelled) {
+            return
+        }
+        checkBlocked = result.blocked
+        runOnUiThread { showResult(result) }
+    }
+
+    private fun setRunEnabled(on: Boolean) {
+        runBtn.isEnabled = on
+        runBtn.alpha = if (on) 1f else 0.4f
+    }
+
+    private fun setProgress(percent: Int) {
+        val pct = percent.coerceIn(0, 100)
+        (progressFill.layoutParams as LinearLayout.LayoutParams).weight = pct.toFloat()
+        (progressRest.layoutParams as LinearLayout.LayoutParams).weight = (100 - pct).toFloat()
+        progressBar.requestLayout()
+    }
+
+    private fun showProgress(pr: CheckProgress) {
+        progressHead.text = tr("memeriksa ${pr.index} dari ${pr.total} file", "checking ${pr.index} of ${pr.total} files")
+        progressDetail.text = tr("${pr.file} · ${human(pr.fileDone)} dari ${human(pr.fileSize)}",
+            "${pr.file} · ${human(pr.fileDone)} of ${human(pr.fileSize)}")
+        setProgress(if (pr.allTotal > 0L) (pr.allDone * 100L / pr.allTotal).toInt() else 0)
+    }
+
+    /** Satu baris hasil: titik warna, judul, keterangan, dan daftar nama file. */
+    private fun resultRow(color: Int, head: String, sub: String?, names: List<String>): LinearLayout {
+        val p = pal()
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        row.addView(View(this).apply {
+            background = rounded(color, 4, null)
+            layoutParams = LinearLayout.LayoutParams(dp(8), dp(8)).apply {
+                topMargin = dp(5)
+                marginEnd = dp(8)
+            }
+        })
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        col.addView(textLine(head, 14f, medium = true, color = color))
+        if (sub != null) col.addView(textLine(sub, 12f, color = p.muted))
+        if (names.isNotEmpty()) {
+            val shown = names.take(8).toMutableList()
+            if (names.size > 8) shown.add(tr("dan ${names.size - 8} file lain", "and ${names.size - 8} more files"))
+            col.addView(textLine(shown.joinToString("\n"), 12f, color = p.text, mono = true).apply {
+                setPadding(0, dp(4), 0, 0)
+            })
+        }
+        row.addView(col)
+        return row
+    }
+
+    /** Menampilkan hasil pemeriksaan. JALANKAN hanya menyala jika tidak ada file korup atau hilang. */
+    private fun showResult(r: RomCheckResult) {
+        val p = pal()
+        val ok = r.of(FileVerdict.OK)
+        val corrupt = r.of(FileVerdict.CORRUPT)
+        val missing = r.of(FileVerdict.MISSING)
+        val unknown = r.of(FileVerdict.UNKNOWN)
+        val total = r.items.size
+        val redo = tr("ekstrak ulang file .tgz, lalu pilih folder lagi", "extract the .tgz again, then choose the folder again")
+
+        resultBox.removeAllViews()
+        if (corrupt.isNotEmpty()) {
+            resultBox.addView(resultRow(
+                p.danger,
+                tr("${corrupt.size} file korup", "${corrupt.size} corrupt files"),
+                redo,
+                corrupt.map { it.file }
+            ))
+        }
+        if (missing.isNotEmpty()) {
+            resultBox.addView(resultRow(
+                p.danger,
+                tr("${missing.size} file hilang", "${missing.size} missing files"),
+                redo,
+                missing.map { it.file }
+            ))
+        }
+        if (ok.isNotEmpty()) {
+            if (ok.size == total) {
+                resultBox.addView(resultRow(
+                    p.okText,
+                    tr("$total dari $total file cocok", "$total of $total files match"),
+                    tr("isi semua file sama dengan daftar dari paket", "all file contents match the package's list"),
+                    emptyList()
+                ))
+            } else {
+                resultBox.addView(resultRow(p.okText, tr("${ok.size} file cocok", "${ok.size} files match"), null, emptyList()))
+            }
+        }
+        if (unknown.isNotEmpty()) {
+            resultBox.addView(resultRow(
+                p.warnText,
+                tr("${unknown.size} file tidak bisa dipastikan", "${unknown.size} files could not be confirmed"),
+                if (r.hasLists) tr("tidak ada di daftar pembanding paket ini", "not in this package's reference list")
+                else tr("paket ini tidak punya daftar pembanding", "this package has no reference list"),
+                unknown.map { it.file }
+            ))
+        }
+        progressBox.visibility = View.GONE
+        resultBox.visibility = View.VISIBLE
+        setRunEnabled(romScript != null && !r.blocked)
     }
 
     /** Alur JALANKAN: cek perangkat, buat rencana dari flash_all.sh, tulis langkahnya ke log, lalu jalankan. */
@@ -93,6 +243,11 @@ class FlashRomActivity : FlasherBase() {
         if (src == null || script == null) {
             alert(tr("Pilih paket ROM yang berisi flash_all.sh dulu.",
                 "Choose a ROM package that contains flash_all.sh first."))
+            return
+        }
+        if (checkBlocked) {
+            alert(tr("Ada file korup atau hilang di paket ini. Ekstrak ulang file .tgz, lalu pilih folder lagi.",
+                "This package has corrupt or missing files. Extract the .tgz again, then choose the folder again."))
             return
         }
         val dry = FlashSettings.dryRun(this)
@@ -237,6 +392,46 @@ class FlashRomActivity : FlasherBase() {
         }
         step1.addView(missingText)
         form.addView(step1)
+
+        // Kartu pemeriksaan file: tampil setelah folder dipilih
+        checkCard = subCard()
+        checkCard.visibility = View.GONE
+        checkCard.addView(caption(tr("pemeriksaan file", "file check")))
+
+        progressBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        progressHead = textLine("", 14f, medium = true, color = p.text)
+        progressBox.addView(progressHead)
+        progressFill = View(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(NeonTheme.VIOLET, NeonTheme.MAGENTA, NeonTheme.CYAN)
+            ).apply { cornerRadius = dp(3).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0f)
+        }
+        progressRest = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 100f)
+        }
+        progressBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = rounded(p.border, 3, null)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(6)).apply {
+                topMargin = dp(8)
+            }
+            addView(progressFill)
+            addView(progressRest)
+        }
+        progressBox.addView(progressBar)
+        progressDetail = textLine("", 12f, color = p.muted, mono = true)
+        progressDetail.setPadding(0, dp(6), 0, 0)
+        progressBox.addView(progressDetail)
+        checkCard.addView(progressBox)
+
+        resultBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        checkCard.addView(resultBox)
+        form.addView(checkCard)
         content.addView(form)
 
         val warn = LinearLayout(this).apply {
@@ -255,8 +450,7 @@ class FlashRomActivity : FlasherBase() {
 
         runBtn = btn(tr("JALANKAN", "RUN"), BtnStyle.PRIMARY) { onRunRom() }
         runBtn.paint.isFakeBoldText = true
-        runBtn.isEnabled = false
-        runBtn.alpha = 0.4f
+        setRunEnabled(false)
         content.addView(runBtn)
 
         setContentView(page(ScrollView(this).apply { addView(content) }, logPanel()))
