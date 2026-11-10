@@ -284,7 +284,7 @@ class MainActivity : FlasherBase() {
                 color = p.warnText
             ).apply { setPadding(0, dp(4), 0, 0) })
             addView(textLine(
-                tr("Jika menemukan masalah atau kesalahan pada aplikasi ini, laporkan lewat Telegram atau GitHub di atas.",
+                tr("Jika menemukan masalah atau kesalahan pada aplikasi ini, laporkan log nya lewat Telegram atau GitHub di atas.",
                     "If you find a problem or a bug in this app, report it through Telegram or GitHub above."),
                 12f,
                 color = p.warnText
