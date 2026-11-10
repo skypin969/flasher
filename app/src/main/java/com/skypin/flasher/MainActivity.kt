@@ -237,8 +237,8 @@ class MainActivity : FlasherBase() {
         menuRom = neonRow(
             "ROM", p.soft, NeonTheme.MAGENTA,
             "FLASH FASTBOOT ROM",
-            tr("pilih folder atau .tgz, lalu jalankan",
-                "pick a folder or .tgz, then run it")
+            tr("pilih folder, lalu jalankan",
+                "pick a folder, then run it")
         ) { openScreen(FlashRomActivity::class.java) }
         root.addView(menuRom)
         // ADB sideload: tidak perlu CEK FASTBOOT, layar itu memeriksa perangkat ADB sendiri
