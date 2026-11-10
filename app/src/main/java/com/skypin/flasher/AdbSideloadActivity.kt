@@ -63,11 +63,15 @@ class AdbSideloadActivity : FlasherBase() {
         val p = pal()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            // Jarak atas dibuat kecil supaya isi halaman naik dan log (yang mengisi sisa layar) jadi lebih tinggi
+            setPadding(dp(16), dp(4), dp(16), dp(16))
             background = neonBackground()
         }
 
-        root.addView(backButton { onBack() })
+        val back = backButton { onBack() }
+        back.minimumHeight = dp(40)
+        back.layoutParams = lp(top = 0)
+        root.addView(back)
         root.addView(gradientTitle("ADB SIDELOAD", 22f).apply {
             setPadding(0, dp(4), 0, 0)
         })
@@ -77,7 +81,7 @@ class AdbSideloadActivity : FlasherBase() {
             color = p.muted
         ))
         deviceLine = textLine("", 14f, color = p.sec).apply {
-            setPadding(0, dp(8), 0, dp(4))
+            setPadding(0, dp(4), 0, dp(4))
         }
         root.addView(deviceLine)
 
@@ -155,7 +159,7 @@ class AdbSideloadActivity : FlasherBase() {
         root.addView(
             makeLog(fill = true),
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-                topMargin = dp(10)
+                topMargin = dp(8)
             }
         )
 
@@ -163,7 +167,7 @@ class AdbSideloadActivity : FlasherBase() {
     }
 
     private fun stepLine(s: String): TextView = textLine(s, 14f).apply {
-        setPadding(0, dp(6), 0, 0)
+        setPadding(0, dp(4), 0, 0)
     }
 
     /** Judul tebal dengan gradasi ungu ke cyan, seperti di tampilan Flashmate. Gradasi mengikuti lebar tulisan. */
