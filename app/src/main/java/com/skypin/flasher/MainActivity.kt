@@ -248,14 +248,6 @@ class MainActivity : FlasherBase() {
             tr("kirim file .zip dari recovery lewat adb", "send a .zip file from recovery over adb")
         ) { startActivity(Intent(this, AdbSideloadActivity::class.java)) }
         root.addView(menuSdl)
-        // TERMINAL: perintah shell tanpa root, atau dengan root lewat su. Tidak perlu CEK FASTBOOT.
-        val menuSh = neonRow(
-            "SH", p.soft, NeonTheme.MAGENTA,
-            "TERMINAL",
-            tr("jalankan perintah shell, tanpa root atau dengan root",
-                "run shell commands, without root or with root")
-        ) { startActivity(Intent(this, TerminalActivity::class.java)) }
-        root.addView(menuSh)
 
         lockNote = textLine(
             tr("Tekan CEK FASTBOOT dulu sebelum flash.", "Press CHECK FASTBOOT DEVICE before flashing."),
