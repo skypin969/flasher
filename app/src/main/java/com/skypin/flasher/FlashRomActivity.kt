@@ -182,7 +182,10 @@ class FlashRomActivity : FlasherBase() {
         return row
     }
 
-    /** Menampilkan hasil pemeriksaan. JALANKAN hanya menyala jika tidak ada file korup atau hilang. */
+    /**
+     * Menampilkan hasil pemeriksaan. JALANKAN hanya menyala jika tidak ada file korup atau hilang.
+     * Warna merah dan kuning hanya dipakai untuk masalah. File tanpa pembanding ditulis kecil dan abu-abu.
+     */
     private fun showResult(r: RomCheckResult) {
         val p = pal()
         val ok = r.of(FileVerdict.OK)
@@ -190,6 +193,7 @@ class FlashRomActivity : FlasherBase() {
         val missing = r.of(FileVerdict.MISSING)
         val unknown = r.of(FileVerdict.UNKNOWN)
         val total = r.items.size
+        val clean = corrupt.isEmpty() && missing.isEmpty()
         val redo = tr("ekstrak ulang file .tgz, lalu pilih folder lagi", "extract the .tgz again, then choose the folder again")
 
         resultBox.removeAllViews()
@@ -210,25 +214,37 @@ class FlashRomActivity : FlasherBase() {
             ))
         }
         if (ok.isNotEmpty()) {
-            if (ok.size == total) {
+            val head = when {
+                ok.size == total -> tr("$total dari $total file cocok", "$total of $total files match")
+                clean -> tr("${ok.size} file cocok, tidak ada file korup", "${ok.size} files match, no corrupt files")
+                else -> tr("${ok.size} file cocok", "${ok.size} files match")
+            }
+            val sub = if (ok.size == total) {
+                tr("isi semua file sama dengan daftar dari paket", "all file contents match the package's list")
+            } else {
+                null
+            }
+            resultBox.addView(resultRow(p.okText, head, sub, emptyList()))
+        }
+        if (unknown.isNotEmpty()) {
+            if (!r.hasLists) {
+                // Paket tanpa daftar sama sekali: ini perlu terlihat jelas
                 resultBox.addView(resultRow(
-                    p.okText,
-                    tr("$total dari $total file cocok", "$total of $total files match"),
-                    tr("isi semua file sama dengan daftar dari paket", "all file contents match the package's list"),
+                    p.warnText,
+                    tr("isi file tidak bisa dipastikan", "file contents could not be confirmed"),
+                    tr("paket ini tidak punya daftar pembanding", "this package has no reference list"),
                     emptyList()
                 ))
             } else {
-                resultBox.addView(resultRow(p.okText, tr("${ok.size} file cocok", "${ok.size} files match"), null, emptyList()))
+                val shown = unknown.map { it.file }.take(8).toMutableList()
+                if (unknown.size > 8) shown.add(tr("dan ${unknown.size - 8} file lain", "and ${unknown.size - 8} more files"))
+                resultBox.addView(textLine(
+                    tr("${unknown.size} file tanpa pembanding: ", "${unknown.size} files without a reference: ") +
+                        shown.joinToString(", "),
+                    12f,
+                    color = p.muted
+                ).apply { setPadding(dp(16), dp(6), 0, 0) })
             }
-        }
-        if (unknown.isNotEmpty()) {
-            resultBox.addView(resultRow(
-                p.warnText,
-                tr("${unknown.size} file tidak bisa dipastikan", "${unknown.size} files could not be confirmed"),
-                if (r.hasLists) tr("tidak ada di daftar pembanding paket ini", "not in this package's reference list")
-                else tr("paket ini tidak punya daftar pembanding", "this package has no reference list"),
-                unknown.map { it.file }
-            ))
         }
         progressBox.visibility = View.GONE
         resultBox.visibility = View.VISIBLE
