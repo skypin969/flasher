@@ -121,12 +121,19 @@ private fun readMaxDownload(text: String?): Long {
     return if (v >= 1024L * 1024L) v else DEFAULT_MAX_DOWNLOAD
 }
 
-/** Nama yang dicoba di daftar untuk satu partisi: nama asli, tanpa akhiran slot, lalu dengan _a dan _b. */
+/**
+ * Nama yang dicoba di daftar untuk satu partisi: nama asli, tanpa akhiran slot, lalu dengan _a dan _b.
+ * Akhiran slot di script bisa _a, _b, atau _ab (dua slot sekaligus), sedangkan daftar memakai _a dan _b.
+ */
 private fun keysFor(parts: List<String>): List<String> {
     val keys = LinkedHashSet<String>()
     for (p in parts) {
         keys.add(p)
-        val base = if (p.endsWith("_a") || p.endsWith("_b")) p.dropLast(2) else p
+        val base = when {
+            p.endsWith("_ab") -> p.dropLast(3)
+            p.endsWith("_a") || p.endsWith("_b") -> p.dropLast(2)
+            else -> p
+        }
         keys.add(base)
         keys.add(base + "_a")
         keys.add(base + "_b")
