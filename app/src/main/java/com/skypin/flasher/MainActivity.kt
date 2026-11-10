@@ -147,7 +147,7 @@ class MainActivity : FlasherBase() {
             gravity = Gravity.CENTER_VERTICAL
             background = neonBorder(12, p.card)
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            layoutParams = lp(top = 10)
+            layoutParams = lp(top = 8)
             isClickable = true
             setOnClickListener { onClick() }
         }
@@ -185,6 +185,8 @@ class MainActivity : FlasherBase() {
         val title = textLine("√- Flashmate", 22f, medium = true, color = p.text).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+        // Judul ditebalkan seperti judul halaman lain
+        title.paint.isFakeBoldText = true
         applyNeonText(title)
         header.addView(title)
         header.addView(langSwitch())
@@ -217,6 +219,8 @@ class MainActivity : FlasherBase() {
         infoUnlock = textLine("", 12f, medium = true)
         bootRow.addView(infoUnlock)
         card.addView(bootRow)
+        // Jarak kartu ke tombol CEK FASTBOOT dirapatkan supaya tombol, Menu, dan Kontak naik
+        card.layoutParams = lp(bottom = 4)
         root.addView(card)
 
         root.addView(btn(tr("CEK FASTBOOT", "CHECK FASTBOOT DEVICE"), BtnStyle.PRIMARY) { onCheckTarget() })
@@ -260,6 +264,31 @@ class MainActivity : FlasherBase() {
         })
         root.addView(neonRow("GH", p.ghSoft, p.ghIcon, "GitHub", "github.com/skypin969") {
             openUrl("https://github.com/skypin969")
+        })
+
+        // Peringatan pemakaian, di bawah kontak
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = rounded(p.warnBg, 10, null)
+            layoutParams = lp(top = 12)
+            addView(textLine(tr("Peringatan", "Warning"), 13f, medium = true, color = p.warnText))
+            addView(textLine(
+                tr("Flashing selalu punya risiko, misalnya perangkat tidak bisa menyala atau data hilang. " +
+                    "Semua risiko dari pemakaian aplikasi ini ditanggung pengguna. " +
+                    "Pengembang tidak bertanggung jawab atas kerusakan perangkat atau kehilangan data.",
+                    "Flashing always carries risk, such as a device that no longer boots or lost data. " +
+                        "You use this app at your own risk. " +
+                        "The developer is not responsible for device damage or data loss."),
+                12f,
+                color = p.warnText
+            ).apply { setPadding(0, dp(4), 0, 0) })
+            addView(textLine(
+                tr("Jika menemukan masalah atau kesalahan pada aplikasi ini, laporkan lewat Telegram atau GitHub di atas.",
+                    "If you find a problem or a bug in this app, report it through Telegram or GitHub above."),
+                12f,
+                color = p.warnText
+            ).apply { setPadding(0, dp(6), 0, 0) })
         })
 
         setContentView(ScrollView(this).apply {
