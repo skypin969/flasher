@@ -113,7 +113,7 @@ class FlashRomActivity : FlasherBase() {
                 progressBox.visibility = View.VISIBLE
                 progressHead.text = tr("memeriksa file", "checking files")
                 progressDetail.text = ""
-                setProgress(0)
+                setCheckProgress(0)
             }
         }
         log(msg.replace("\n", " | "))
@@ -137,7 +137,7 @@ class FlashRomActivity : FlasherBase() {
         runBtn.alpha = if (on) 1f else 0.4f
     }
 
-    private fun setProgress(percent: Int) {
+    private fun setCheckProgress(percent: Int) {
         val pct = percent.coerceIn(0, 100)
         (progressFill.layoutParams as LinearLayout.LayoutParams).weight = pct.toFloat()
         (progressRest.layoutParams as LinearLayout.LayoutParams).weight = (100 - pct).toFloat()
@@ -148,7 +148,7 @@ class FlashRomActivity : FlasherBase() {
         progressHead.text = tr("memeriksa ${pr.index} dari ${pr.total} file", "checking ${pr.index} of ${pr.total} files")
         progressDetail.text = tr("${pr.file} · ${human(pr.fileDone)} dari ${human(pr.fileSize)}",
             "${pr.file} · ${human(pr.fileDone)} of ${human(pr.fileSize)}")
-        setProgress(if (pr.allTotal > 0L) (pr.allDone * 100L / pr.allTotal).toInt() else 0)
+        setCheckProgress(if (pr.allTotal > 0L) (pr.allDone * 100L / pr.allTotal).toInt() else 0)
     }
 
     /** Satu baris hasil: titik warna, judul, keterangan, dan daftar nama file. */
