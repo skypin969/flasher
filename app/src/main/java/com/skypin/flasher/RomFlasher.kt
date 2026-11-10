@@ -219,7 +219,9 @@ class RomPlan(
     val rom: String,
     val steps: List<Step>,
     val errors: List<String>,
-    val device: DeviceInfo
+    val device: DeviceInfo,
+    /** Catatan yang perlu dibaca sebelum flash, misalnya daftar pemeriksa CRC tidak dikirim. */
+    val notes: List<String> = emptyList()
 )
 
 fun listScripts(src: RomSource): List<String> = ROM_SCRIPTS.filter { src.exists(it) }
@@ -254,7 +256,107 @@ fun buildPlan(src: RomSource, script: String, dev: DeviceInfo, rom: String): Rom
         }
         steps.add(s)
     }
-    return RomPlan(script, rom, steps, errors, dev)
+
+    // Daftar pemeriksa CRC dari paket hanya dikirim jika pemotongan file di perangkat ini cocok dengan daftar itu.
+    // Jika tidak cocok, bootloader akan menolak partisi besar (contoh: super) di tengah proses flash.
+    val notes = ArrayList<String>()
+    var finalSteps: List<Step> = steps
+    if (dev.crc && errors.isEmpty() && steps.any { it is Step.Flash && it.onlyIfCrc }) {
+        val bad = crcMismatches(src, steps, dev)
+        if (bad.isEmpty()) {
+            notes.add("Pemotongan file cocok dengan daftar pemeriksa CRC paket (batas perangkat ${human(dev.maxDownload)}). Daftar dikirim, bootloader ikut memeriksa.")
+        } else {
+            finalSteps = steps.filterNot { it is Step.Flash && it.onlyIfCrc }
+            notes.add("Daftar pemeriksa CRC paket TIDAK dikirim ke perangkat, karena pemotongan file dengan batas perangkat ini (${human(dev.maxDownload)}) tidak cocok dengan daftar itu:")
+            for (b in bad) notes.add("  $b")
+            notes.add("Flash tetap berjalan dengan batas perangkat. Isi file sudah diperiksa aplikasi sebelum flash.")
+        }
+    }
+    return RomPlan(script, rom, finalSteps, errors, dev, notes)
+}
+
+/** Nama yang mungkin dipakai daftar CRC untuk partisi [part]: daftar bisa memakai nama tanpa akhiran slot atau dengan akhiran lain. */
+private fun crcKeys(part: String): List<String> {
+    val base = when {
+        part.endsWith("_ab") -> part.dropLast(3)
+        part.endsWith("_a") || part.endsWith("_b") -> part.dropLast(2)
+        else -> part
+    }
+    return listOf(part, base, base + "_a", base + "_b", base + "_ab").distinct()
+}
+
+/** Membaca images/sparsecrclist.txt: nama partisi dan jumlah bagian sparse yang diharapkan bootloader. */
+private fun readSparseCounts(src: RomSource): Map<String, Int> {
+    val out = HashMap<String, Int>()
+    val text = try {
+        src.readText("images/sparsecrclist.txt")
+    } catch (e: Exception) {
+        null
+    }
+    if (text == null) return out
+    for (line in text.lines()) {
+        val tok = line.trim().split(Regex("\\s+"))
+        if (tok.size < 2) continue
+        val n = tok[1].toIntOrNull() ?: continue
+        out[tok[0]] = n
+    }
+    return out
+}
+
+/** Membaca images/crclist.txt: nama partisi yang dicek bootloader sebagai satu file utuh. */
+private fun readCrcNames(src: RomSource): Set<String> {
+    val out = HashSet<String>()
+    val text = try {
+        src.readText("images/crclist.txt")
+    } catch (e: Exception) {
+        null
+    }
+    if (text == null) return out
+    for (line in text.lines()) {
+        val tok = line.trim().split(Regex("\\s+"))
+        if (tok.size >= 2 && tok[1].startsWith("0x", ignoreCase = true)) out.add(tok[0])
+    }
+    return out
+}
+
+/**
+ * Membandingkan jumlah bagian yang akan dikirim aplikasi (dengan batas max-download-size perangkat)
+ * dengan jumlah bagian di daftar CRC paket. Hasil kosong berarti semuanya cocok.
+ */
+private fun crcMismatches(src: RomSource, steps: List<Step>, dev: DeviceInfo): List<String> {
+    val sparse = readSparseCounts(src)
+    val plain = readCrcNames(src)
+    val out = ArrayList<String>()
+    val planned = HashMap<String, Int>()
+    val reported = HashSet<String>()
+    for (s in steps) {
+        if (s !is Step.Flash || s.onlyIfCrc) continue
+        if (!src.exists(s.file)) continue
+        var want: Int? = null
+        var listed = false
+        for (k in crcKeys(s.part)) {
+            if (want == null) want = sparse[k]
+            if (k in plain) listed = true
+        }
+        if (want == null && !listed) continue
+        val size = src.size(s.file)
+        // Partisi di daftar file utuh yang muat dalam satu kiriman tidak perlu dihitung
+        if (want == null && size <= dev.maxDownload) continue
+        val expected = want ?: 1
+        val count = planned.getOrPut(s.file) {
+            try {
+                val map = SparseImage.scan(ImageSrc(size) { src.open(s.file) })
+                if (!map.isSparse && size <= dev.maxDownload) 1 else SparseImage.planParts(map, dev.maxDownload).size
+            } catch (e: Exception) {
+                -1
+            }
+        }
+        if (count != expected && reported.add(s.file)) {
+            val mine = if (count < 0) "tidak bisa dihitung" else "$count bagian"
+            out.add("${s.file}: daftar paket $expected bagian, perangkat ini $mine")
+        }
+    }
+    return out
 }
 
 fun describePlan(p: RomPlan, src: RomSource): String {
@@ -265,6 +367,10 @@ fun describePlan(p: RomPlan, src: RomSource): String {
     if (p.errors.isNotEmpty()) {
         sb.append("\nTIDAK BISA DIJALANKAN:\n")
         for (e in p.errors) sb.append("- ").append(e).append('\n')
+    }
+    if (p.notes.isNotEmpty()) {
+        sb.append("\nCATATAN:\n")
+        for (n in p.notes) sb.append(n).append('\n')
     }
     sb.append("\nLangkah (").append(p.steps.size).append("):\n")
     var total = 0L
