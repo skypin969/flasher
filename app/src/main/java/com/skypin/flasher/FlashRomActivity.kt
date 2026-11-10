@@ -301,10 +301,10 @@ class FlashRomActivity : FlasherBase() {
         }
     }
 
-    /** Log setinggi 260 dp. Ukurannya sama dengan log di FLASH FILE IMG. */
+    /** Log setinggi 180 dp, lebih pendek dari halaman lain supaya tombol JALANKAN di atasnya tetap terlihat. */
     private fun logPanel(): LinearLayout = makeLog().also { section ->
         section.getChildAt(1).layoutParams =
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(260))
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(180))
     }
 
     private fun buildUi() {
