@@ -1,6 +1,7 @@
 package com.skypin.flasher
 
 import java.io.InputStream
+import java.security.MessageDigest
 import java.util.zip.CRC32
 
 /** Hasil pemeriksaan satu file: cocok, korup, tidak bisa dipastikan, atau hilang. */
@@ -41,7 +42,13 @@ private class Measure(val file: String) {
     var partsGot: List<Long>? = null
     var sumExp: Int? = null
     var sumGot: Int? = null
+    var avbExp: AvbHash? = null
+    /** Null jika tidak diperiksa lewat vbmeta. */
+    var avbOk: Boolean? = null
 }
+
+/** Sidik jari SHA-256 satu partisi dari vbmeta.img: dihitung dari salt lalu [size] byte pertama file. */
+private class AvbHash(val size: Long, val salt: ByteArray, val digest: ByteArray)
 
 private const val CHUNK_RAW = 0xCAC1
 private const val CHUNK_FILL = 0xCAC2
@@ -121,19 +128,76 @@ private fun readMaxDownload(text: String?): Long {
     return if (v >= 1024L * 1024L) v else DEFAULT_MAX_DOWNLOAD
 }
 
+private fun be32(b: ByteArray, o: Int): Long =
+    ((b[o].toLong() and 0xFF) shl 24) or
+        ((b[o + 1].toLong() and 0xFF) shl 16) or
+        ((b[o + 2].toLong() and 0xFF) shl 8) or
+        (b[o + 3].toLong() and 0xFF)
+
+private fun be64(b: ByteArray, o: Int): Long = (be32(b, o) shl 32) or be32(b, o + 4)
+
+/**
+ * Membaca sidik jari partisi (hash descriptor SHA-256) dari isi vbmeta.img.
+ * Hasilnya nama partisi tanpa akhiran slot ke sidik jarinya. Kosong jika file bukan vbmeta yang dikenali.
+ */
+private fun readAvbHashes(vb: ByteArray?): Map<String, AvbHash> {
+    val out = HashMap<String, AvbHash>()
+    if (vb == null || vb.size < 256) return out
+    if (vb[0] != 'A'.code.toByte() || vb[1] != 'V'.code.toByte() || vb[2] != 'B'.code.toByte() || vb[3] != '0'.code.toByte()) return out
+    val auth = be64(vb, 12)
+    val descOff = be64(vb, 96)
+    val descSize = be64(vb, 104)
+    if (auth < 0L || descOff < 0L || descSize < 0L) return out
+    var p = 256L + auth + descOff
+    val end = p + descSize
+    if (end > vb.size.toLong()) return out
+    while (p + 16L <= end) {
+        val tag = be64(vb, p.toInt())
+        val n = be64(vb, p.toInt() + 8)
+        val body = p + 16L
+        if (n < 0L || body + n > end) break
+        if (tag == 2L && n >= 116L) {
+            val b = body.toInt()
+            val size = be64(vb, b)
+            var algEnd = b + 8
+            while (algEnd < b + 40 && vb[algEnd] != 0.toByte()) algEnd++
+            val alg = String(vb, b + 8, algEnd - (b + 8), Charsets.US_ASCII)
+            val nameLen = be32(vb, b + 40)
+            val saltLen = be32(vb, b + 44)
+            val digLen = be32(vb, b + 48)
+            val q = body + 116L
+            if (alg == "sha256" && size >= 0L && q + nameLen + saltLen + digLen <= body + n) {
+                val qi = q.toInt()
+                val name = String(vb, qi, nameLen.toInt(), Charsets.UTF_8)
+                val salt = vb.copyOfRange(qi + nameLen.toInt(), qi + nameLen.toInt() + saltLen.toInt())
+                val dig = vb.copyOfRange(
+                    qi + nameLen.toInt() + saltLen.toInt(),
+                    qi + nameLen.toInt() + saltLen.toInt() + digLen.toInt()
+                )
+                out[name] = AvbHash(size, salt, dig)
+            }
+        }
+        p = body + n
+    }
+    return out
+}
+
+/** Nama partisi tanpa akhiran slot. Akhiran di script bisa _a, _b, atau _ab (dua slot sekaligus). */
+private fun slotBase(p: String): String = when {
+    p.endsWith("_ab") -> p.dropLast(3)
+    p.endsWith("_a") || p.endsWith("_b") -> p.dropLast(2)
+    else -> p
+}
+
 /**
  * Nama yang dicoba di daftar untuk satu partisi: nama asli, tanpa akhiran slot, lalu dengan _a dan _b.
- * Akhiran slot di script bisa _a, _b, atau _ab (dua slot sekaligus), sedangkan daftar memakai _a dan _b.
+ * Script bisa memakai _ab, sedangkan daftar memakai _a dan _b.
  */
 private fun keysFor(parts: List<String>): List<String> {
     val keys = LinkedHashSet<String>()
     for (p in parts) {
         keys.add(p)
-        val base = when {
-            p.endsWith("_ab") -> p.dropLast(3)
-            p.endsWith("_a") || p.endsWith("_b") -> p.dropLast(2)
-            else -> p
-        }
+        val base = slotBase(p)
         keys.add(base)
         keys.add(base + "_a")
         keys.add(base + "_b")
@@ -141,19 +205,33 @@ private fun keysFor(parts: List<String>): List<String> {
     return keys.toList()
 }
 
-/** Pembaca file yang sekaligus menghitung CRC32 seluruh file dan jumlah semua byte. */
+/**
+ * Pembaca file yang sekaligus menghitung CRC32 seluruh file dan jumlah semua byte.
+ * Jika [avb] diisi, SHA-256 dari salt dan byte pertama file (sebanyak ukuran di vbmeta) ikut dihitung.
+ */
 private class Meter(
     private val ins: InputStream,
     private val wantCrc: Boolean,
+    avb: AvbHash?,
     private val cancelled: () -> Boolean,
     private val onBytes: (Long) -> Unit
 ) {
     val crc = CRC32()
     var sum = 0L
     private var pending = 0L
+    private val sha: MessageDigest? = if (avb != null) MessageDigest.getInstance("SHA-256").also { it.update(avb.salt) } else null
+    private var shaLeft: Long = avb?.size ?: 0L
+
+    /** Hasil SHA-256, atau null jika file lebih pendek dari ukuran yang dicatat vbmeta. */
+    fun shaDigest(): ByteArray? = if (sha != null && shaLeft == 0L) sha.digest() else null
 
     private fun account(buf: ByteArray, n: Int) {
         if (wantCrc) crc.update(buf, 0, n)
+        if (sha != null && shaLeft > 0L) {
+            val k = minOf(n.toLong(), shaLeft).toInt()
+            sha.update(buf, 0, k)
+            shaLeft -= k
+        }
         var s = 0L
         for (i in 0 until n) s += (buf[i].toInt() and 0xFF)
         sum += s
@@ -331,7 +409,8 @@ private fun measureFile(
         return
     }
     src.open(path).use { ins ->
-        val meter = Meter(ins, m.crcExp != null, cancelled, onBytes)
+        val avb = m.avbExp
+        val meter = Meter(ins, m.crcExp != null, avb, cancelled, onBytes)
         val head = ByteArray(28)
         val got = meter.read(head, 28)
         val sparse = got == 28 &&
@@ -347,12 +426,31 @@ private fun measureFile(
         meter.drain(buf)
         if (m.crcExp != null) m.crcGot = meter.crc.value
         m.sumGot = (meter.sum and 0xFFFF).toInt()
+        // Sidik jari vbmeta berlaku untuk file biasa. File sparse tidak dibandingkan dengan cara ini.
+        if (avb != null && !sparse) {
+            val got = meter.shaDigest()
+            m.avbOk = got != null && got.contentEquals(avb.digest)
+        }
+    }
+}
+
+/** Isi vbmeta.img paket ini, atau null jika tidak ada atau ukurannya tidak wajar. */
+private fun readVbmeta(src: RomSource, files: Map<String, List<String>>): ByteArray? {
+    val path = files.entries.firstOrNull { e -> e.value.any { slotBase(it) == "vbmeta" } }?.key ?: "images/vbmeta.img"
+    if (!src.exists(path)) return null
+    val size = src.size(path)
+    if (size <= 0L || size > 1024L * 1024L) return null
+    return try {
+        src.open(path).use { it.readBytes() }
+    } catch (e: Exception) {
+        null
     }
 }
 
 /**
  * Memeriksa semua file yang dipakai [script] di paket [src].
- * Pembanding dibaca dari paket itu sendiri: images/crclist.txt, images/sparsecrclist.txt, dan images/Checksum.ini.
+ * Pembanding dibaca dari paket itu sendiri: images/crclist.txt, images/sparsecrclist.txt, images/Checksum.ini,
+ * dan sidik jari partisi di vbmeta.img.
  * File hanya disebut korup jika hitungannya memang bisa dibandingkan. Selain itu disebut tidak bisa dipastikan.
  */
 fun verifyRom(
@@ -372,7 +470,8 @@ fun verifyRom(
     val sparseList = readSparseList(src.readText("images/sparsecrclist.txt"))
     val sumList = readChecksumIni(src.readText("images/Checksum.ini"))
     val maxDl = readMaxDownload(src.readText("flash_gen_crc_list.py"))
-    val hasLists = crcList.isNotEmpty() || sparseList.isNotEmpty() || sumList.isNotEmpty()
+    val avbList = readAvbHashes(readVbmeta(src, files))
+    val hasLists = crcList.isNotEmpty() || sparseList.isNotEmpty() || sumList.isNotEmpty() || avbList.isNotEmpty()
 
     val names = files.keys.toList()
     val sizes = names.map { if (src.exists(it)) src.size(it) else 0L }
@@ -390,10 +489,12 @@ fun verifyRom(
             m.missing = true
             continue
         }
-        val keys = keysFor(files[path] ?: emptyList())
+        val partNames = files[path] ?: emptyList<String>()
+        val keys = keysFor(partNames)
         m.crcExp = keys.firstNotNullOfOrNull { crcList[it] }
         m.partsExp = keys.firstNotNullOfOrNull { sparseList[it] }
         m.sumExp = keys.firstNotNullOfOrNull { sumList[it] }
+        m.avbExp = partNames.firstNotNullOfOrNull { avbList[slotBase(it)] }
 
         val size = sizes[idx]
         var fileDone = 0L
@@ -416,13 +517,14 @@ fun verifyRom(
     // Satu cara hitung baru dipercaya jika cocok minimal sekali di paket ini.
     val crcTrusted = measures.any { it.crcExp != null && it.crcGot == it.crcExp }
     val sumTrusted = measures.any { it.sumExp != null && it.sumGot == it.sumExp }
+    val avbTrusted = measures.any { it.avbOk == true }
     val sparseTrusted = measures.any { m ->
         val e = m.partsExp
         val g = m.partsGot
         e != null && g != null && e.size == g.size && e.indices.any { e[it] == g[it] }
     }
 
-    val items = measures.map { judge(it, crcTrusted, sparseTrusted, sumTrusted, hasLists) }
+    val items = measures.map { judge(it, crcTrusted, sparseTrusted, sumTrusted, avbTrusted, hasLists) }
     for (c in items) {
         when (c.verdict) {
             FileVerdict.OK -> Unit
@@ -448,7 +550,7 @@ fun verifyRom(
 }
 
 /**
- * Lewat daftar mana file ini cocok: crclist, jumlah bagian sparse, atau Checksum.ini. Null jika tidak cocok.
+ * Lewat daftar mana file ini cocok: crclist, jumlah bagian sparse, Checksum.ini, atau vbmeta. Null jika tidak cocok.
  * Hasil cocok tidak perlu menunggu cara hitungnya dipercaya.
  */
 private fun matchHow(m: Measure): String? {
@@ -465,6 +567,7 @@ private fun matchHow(m: Measure): String? {
         }
         return "Checksum.ini"
     }
+    if (m.avbOk == true) return "vbmeta"
     return null
 }
 
@@ -473,6 +576,7 @@ private fun judge(
     crcTrusted: Boolean,
     sparseTrusted: Boolean,
     sumTrusted: Boolean,
+    avbTrusted: Boolean,
     hasLists: Boolean
 ): FileCheck {
     if (m.missing) return FileCheck(m.file, FileVerdict.MISSING, tr("file tidak ada di paket", "file is not in the package"))
@@ -504,7 +608,11 @@ private fun judge(
     if (m.sumExp != null && sumTrusted) {
         return FileCheck(m.file, FileVerdict.CORRUPT, tr("isi tidak sama dengan Checksum.ini", "content differs from Checksum.ini"))
     }
-    val listed = m.crcExp != null || m.partsExp != null || m.sumExp != null
+    if (m.avbOk == true) return FileCheck(m.file, FileVerdict.OK, tr("cocok (vbmeta)", "matches (vbmeta)"))
+    if (m.avbOk == false && avbTrusted) {
+        return FileCheck(m.file, FileVerdict.CORRUPT, tr("isi tidak sama dengan vbmeta.img", "content differs from vbmeta.img"))
+    }
+    val listed = m.crcExp != null || m.partsExp != null || m.sumExp != null || m.avbExp != null
     val note = when {
         !hasLists -> tr("paket ini tidak punya daftar pembanding", "this package has no reference list")
         listed -> tr("tidak bisa dibandingkan dengan daftar paket ini", "cannot be compared with this package's list")
