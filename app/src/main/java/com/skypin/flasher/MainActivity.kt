@@ -19,8 +19,6 @@ class MainActivity : FlasherBase() {
     private lateinit var infoName: TextView
     private lateinit var infoDetail: TextView
     private lateinit var infoUnlock: TextView
-    private lateinit var menuImg: View
-    private lateinit var menuRom: View
     private lateinit var lockNote: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,8 +43,7 @@ class MainActivity : FlasherBase() {
         infoName.text = if (t != null) marketName(t.product) else tr("Belum Dicek", "Not checked")
         infoDetail.text = if (t != null) "${t.product} · ${t.serial}" else "-"
         infoUnlock.text = unlockText()
-        menuImg.alpha = if (ok) 1f else 0.4f
-        menuRom.alpha = if (ok) 1f else 0.4f
+        // Menu selalu bisa dibuka. Catatan ini hanya pengingat sampai perangkat dicek.
         lockNote.visibility = if (ok) View.GONE else View.VISIBLE
     }
 
@@ -87,11 +84,8 @@ class MainActivity : FlasherBase() {
         onCheckTarget()
     }
 
+    /** Menu bisa dibuka tanpa CEK FASTBOOT. Tombol flash di halaman itu yang mewajibkan perangkat sudah dicek. */
     private fun openScreen(target: Class<*>) {
-        if (Session.target == null) {
-            Toast.makeText(this, tr("Tekan CEK FASTBOOT dulu.", "Press CHECK FASTBOOT DEVICE first."), Toast.LENGTH_LONG).show()
-            return
-        }
         startActivity(Intent(this, target))
     }
 
@@ -227,27 +221,24 @@ class MainActivity : FlasherBase() {
         root.addView(btn(tr("CEK FASTBOOT", "CHECK FASTBOOT DEVICE"), BtnStyle.PRIMARY) { onCheckTarget() })
 
         root.addView(caption(tr("Menu", "Menu")).apply { setTextColor(NeonTheme.MAGENTA) })
-        menuImg = neonRow(
+        root.addView(neonRow(
             "IMG", p.soft, NeonTheme.MAGENTA,
             "FLASH FILE IMG",
             tr("isi nama partisi, pilih file .img",
                 "enter the partition name, pick a .img file")
-        ) { openScreen(FlashImgActivity::class.java) }
-        root.addView(menuImg)
-        menuRom = neonRow(
+        ) { openScreen(FlashImgActivity::class.java) })
+        root.addView(neonRow(
             "ROM", p.soft, NeonTheme.MAGENTA,
             "FLASH FASTBOOT ROM",
             tr("pilih folder, lalu jalankan",
                 "pick a folder, then run it")
-        ) { openScreen(FlashRomActivity::class.java) }
-        root.addView(menuRom)
+        ) { openScreen(FlashRomActivity::class.java) })
         // ADB sideload: tidak perlu CEK FASTBOOT, layar itu memeriksa perangkat ADB sendiri
-        val menuSdl = neonRow(
+        root.addView(neonRow(
             "SDL", p.soft, NeonTheme.MAGENTA,
             "ADB SIDELOAD",
             tr("kirim file .zip dari recovery lewat adb", "send a .zip file from recovery over adb")
-        ) { startActivity(Intent(this, AdbSideloadActivity::class.java)) }
-        root.addView(menuSdl)
+        ) { startActivity(Intent(this, AdbSideloadActivity::class.java)) })
 
         lockNote = textLine(
             tr("Tekan CEK FASTBOOT dulu sebelum flash.", "Press CHECK FASTBOOT DEVICE before flashing."),
