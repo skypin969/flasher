@@ -402,7 +402,8 @@ fun verifyRom(
         } catch (e: Exception) {
             m.structError = tr("tidak bisa dibaca: ", "cannot be read: ") + (e.message ?: e.javaClass.simpleName)
         }
-        if (m.structError == null && isMatch(m)) log(tr("$short cocok", "$short matches"))
+        val how = if (m.structError == null) matchHow(m) else null
+        if (how != null) log(tr("$short cocok ($how)", "$short matches ($how)"))
     }
 
     // Satu cara hitung baru dipercaya jika cocok minimal sekali di paket ini.
@@ -439,13 +440,25 @@ fun verifyRom(
     return result
 }
 
-/** Cocok dengan salah satu daftar. Hasil cocok tidak perlu menunggu cara hitungnya dipercaya. */
-private fun isMatch(m: Measure): Boolean {
-    if (m.crcExp != null && m.crcGot == m.crcExp) return true
+/**
+ * Lewat daftar mana file ini cocok: crclist, jumlah bagian sparse, atau Checksum.ini. Null jika tidak cocok.
+ * Hasil cocok tidak perlu menunggu cara hitungnya dipercaya.
+ */
+private fun matchHow(m: Measure): String? {
+    if (m.crcExp != null && m.crcGot == m.crcExp) return "crclist"
     val e = m.partsExp
     val g = m.partsGot
-    if (e != null && g != null && e == g) return true
-    return m.sumExp != null && m.sumGot == m.sumExp
+    if (e != null && g != null && e == g) return tr("${e.size} bagian", "${e.size} parts")
+    if (m.sumExp != null && m.sumGot == m.sumExp) {
+        // Bagian sparse tidak sama dengan daftar: tulis angkanya supaya bisa diperiksa
+        if (e != null && g != null) {
+            val same = if (e.size == g.size) e.indices.count { e[it] == g[it] } else 0
+            return tr("Checksum.ini; bagian sparse dihitung ${g.size}, di daftar ${e.size}, sama $same",
+                "Checksum.ini; sparse parts computed ${g.size}, listed ${e.size}, equal $same")
+        }
+        return "Checksum.ini"
+    }
+    return null
 }
 
 private fun judge(
