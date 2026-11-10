@@ -20,10 +20,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import java.io.File
-import java.io.IOException
 
-/** Halaman Flash fastboot ROM tgz: pilih paket, script flash_all.sh dipilih otomatis, lalu jalankan. */
+/** Halaman Flash fastboot ROM: pilih folder paket ROM yang sudah diekstrak, script flash_all.sh dipilih otomatis, lalu jalankan. */
 class FlashRomActivity : FlasherBase() {
 
     @Volatile private var romSource: RomSource? = null
@@ -48,7 +46,6 @@ class FlashRomActivity : FlasherBase() {
         val uri = data?.data ?: return
         when (requestCode) {
             REQ_PICK_TREE -> loadRomFolder(uri)
-            REQ_PICK_TGZ -> loadRomTgz(uri)
         }
     }
 
@@ -60,20 +57,6 @@ class FlashRomActivity : FlasherBase() {
         runTask(tr("Baca folder ROM", "Read ROM folder")) {
             runCatching { contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             setRom(SafRomSource(contentResolver, tree), tree.lastPathSegment ?: "folder")
-        }
-    }
-
-    private fun loadRomTgz(uri: Uri) {
-        runTask(tr("Ekstrak ROM .tgz", "Extract ROM .tgz")) {
-            val name = queryNameSize(uri).first
-            val stem = name.removeSuffix(".tgz").removeSuffix(".tar.gz").removeSuffix(".tar").ifBlank { "rom" }
-            val dest = File(getExternalFilesDir(null), "rom/$stem")
-            dest.deleteRecursively()
-            dest.mkdirs()
-            val input = contentResolver.openInputStream(uri)
-                ?: throw IOException(tr("Tidak bisa membuka file .tgz", "Cannot open .tgz file"))
-            input.use { TgzExtractor.extract(it, dest) { m -> log(m) } }
-            setRom(FileRomSource(dest), name)
         }
     }
 
