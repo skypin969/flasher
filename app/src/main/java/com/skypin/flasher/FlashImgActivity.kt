@@ -197,10 +197,10 @@ class FlashImgActivity : FlasherBase() {
         }
     }
 
-    /** Log setinggi 260 dp. Ukurannya sama dengan log di FLASH FASTBOOT ROM. */
+    /** Log setinggi 300 dp. Isi halaman dinaikkan ke atas supaya log bisa setinggi ini. */
     private fun logPanel(): LinearLayout = makeLog().also { section ->
         section.getChildAt(1).layoutParams =
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(260))
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(300))
     }
 
     /** Tombol sekunder bergaris neon: isi gelap, garis pinggir dan tulisan bergradasi. */
@@ -230,15 +230,18 @@ class FlashImgActivity : FlasherBase() {
         val p = pal()
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(8))
+            setPadding(dp(16), dp(4), dp(16), dp(8))
         }
 
+        // Jarak atas dibuat kecil supaya isi halaman naik dan log bisa lebih tinggi
         backBtn = backButton { finish() }
+        backBtn.minimumHeight = dp(40)
+        backBtn.layoutParams = lp(top = 0)
         content.addView(backBtn)
         content.addView(textLine(tr("FLASH FILE IMG", "FLASH FILE IMG"), 22f, medium = true).apply {
             paint.isFakeBoldText = true
             applyNeonText(this)
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, dp(4), 0, 0)
         })
         val tgt = Session.target
         content.addView(
@@ -251,29 +254,32 @@ class FlashImgActivity : FlasherBase() {
         formPanel = box()
         formPanel.addView(caption(tr("nama partisi", "partition name")))
         partitionInput = EditText(this).apply {
-            hint = tr("contoh: boot, init_boot, atau vendor_boot", "example: boot, init_boot, or vendor_boot")
+            hint = tr("contoh: boot, init_boot, vendor_boot, recovery", "example: boot, init_boot, vendor_boot, recovery")
             setHintTextColor(p.muted)
             setTextColor(p.text)
             typeface = Fonts.regular
-            textSize = 15f
+            textSize = 13f
             setSingleLine(true)
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = rounded(p.sub, 10, p.border)
         }
         formPanel.addView(partitionInput)
 
-        val chips = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(8), 0, 0)
-        }
-        for ((i, name) in listOf("boot", "init_boot", "vendor_boot").withIndex()) {
-            val chip = neonOutline(name, 20, 13f, 8) { partitionInput.setText(name) }
-            chip.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = if (i > 0) dp(8) else 0
+        // Tombol pilihan cepat, dua per baris
+        for (rowNames in listOf("boot", "init_boot", "vendor_boot", "recovery").chunked(2)) {
+            val chips = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(8), 0, 0)
             }
-            chips.addView(chip)
+            for ((i, name) in rowNames.withIndex()) {
+                val chip = neonOutline(name, 20, 13f, 8) { partitionInput.setText(name) }
+                chip.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = if (i > 0) dp(8) else 0
+                }
+                chips.addView(chip)
+            }
+            formPanel.addView(chips)
         }
-        formPanel.addView(chips)
 
         formPanel.addView(caption(tr("file .img", ".img file")))
         val bPick = neonOutline(tr("PILIH FILE", "CHOOSE FILE"), 10, 15f, 12) { pickFile(REQ_PICK_IMG) }
