@@ -63,7 +63,7 @@ private const val REPLY_NO_SPACE = 3
 private const val REPLY_REFUSED = 4
 
 /** Ukuran potongan baca dan tulis. Potongan besar membuat kirim file besar lebih cepat. */
-private const val CHUNK = 1 shl 20
+private const val SHARE_CHUNK = 1 shl 20
 private const val SOCKET_BUFFER = 4 shl 20
 
 /**
@@ -545,7 +545,7 @@ class ShareFileActivity : FlasherBase() {
             sock.soTimeout = 30000
             out.writeByte(REPLY_OK)
             out.flush()
-            val buf = ByteArray(CHUNK)
+            val buf = ByteArray(SHARE_CHUNK)
             val crc = CRC32()
             var got = 0L
             while (got < size) {
@@ -826,7 +826,7 @@ class ShareFileActivity : FlasherBase() {
             }
             val meter = Meter(s, size)
             val crc = CRC32()
-            val buf = ByteArray(CHUNK)
+            val buf = ByteArray(SHARE_CHUNK)
             var sent = 0L
             val src = contentResolver.openInputStream(uri)
                 ?: throw IOException(tr("tidak bisa membuka file", "cannot open the file"))
