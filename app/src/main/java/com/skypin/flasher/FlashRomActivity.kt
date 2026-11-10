@@ -8,6 +8,7 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.net.Uri
@@ -18,6 +19,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 
@@ -48,11 +50,91 @@ class FlashRomActivity : FlasherBase() {
     private lateinit var progressRest: View
     private lateinit var progressDetail: TextView
     private lateinit var resultBox: LinearLayout
+    private lateinit var ujiLabel: TextView
+    private lateinit var gearBtn: View
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         buildUi()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshUjiLabel()
+    }
+
+    /** Tulisan MODE UJI selalu tampil, sebagai penanda bahwa tombol di sebelahnya adalah pengaturan mode uji. */
+    private fun refreshUjiLabel() {
+        ujiLabel.visibility = View.VISIBLE
+    }
+
+    /**
+     * Popup kecil di bawah tombol pojok kanan atas: saklar Mode uji dan penjelasannya.
+     * Mode uji hanya berubah saat pengguna mengetuk saklar ini. Aplikasi tidak pernah mengubahnya sendiri.
+     */
+    private fun showUjiPopup() {
+        val p = pal()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = neonFrame(p.card, 14)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+        }
+        val textCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        textCol.addView(textLine(tr("Mode uji", "Test mode"), 15f, medium = true, color = p.text))
+        val state = textLine("", 12f, color = p.accent)
+        textCol.addView(state)
+        row.addView(textCol)
+        val toggle = NeonToggle(this).apply {
+            isChecked = FlashSettings.dryRun(this@FlashRomActivity)
+            // Klik ditangani oleh baris, supaya nilai selalu disimpan
+            isClickable = false
+        }
+        row.addView(toggle)
+        fun showState(on: Boolean) {
+            state.text = if (on) tr("aktif", "on") else tr("nonaktif", "off")
+            state.setTextColor(if (on) p.accent else p.warnText)
+        }
+        showState(toggle.isChecked)
+        row.setOnClickListener {
+            if (busy) {
+                log(tr("Tunggu proses berjalan selesai dulu.", "Wait for the running task to finish."))
+                return@setOnClickListener
+            }
+            val on = !toggle.isChecked
+            toggle.isChecked = on
+            FlashSettings.setDryRun(this@FlashRomActivity, on)
+            showState(on)
+            refreshUjiLabel()
+        }
+        content.addView(row)
+        content.addView(textLine(
+            tr("aktif: JALANKAN hanya memeriksa dan menulis langkah di log. tidak ada data yang dikirim ke hp target.",
+                "on: RUN only checks and writes the steps to the log. no data is sent to the target phone."),
+            12f,
+            color = p.muted
+        ).apply { setPadding(0, dp(10), 0, 0) })
+        content.addView(textLine(
+            tr("nonaktif: flash sungguhan. semua data di hp target dihapus.",
+                "off: real flash. all data on the target phone is erased."),
+            12f,
+            color = p.warnText
+        ).apply { setPadding(0, dp(6), 0, 0) })
+
+        val popup = PopupWindow(content, dp(270), LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        popup.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popup.isOutsideTouchable = true
+        popup.elevation = dp(8).toFloat()
+        popup.showAsDropDown(gearBtn, 0, dp(6), Gravity.END)
     }
 
     override fun onDestroy() {
@@ -330,7 +412,7 @@ class FlashRomActivity : FlasherBase() {
             setPadding(dp(16), dp(4), dp(16), dp(8))
         }
 
-        // Baris atas: Kembali di kiri, tombol Pengaturan (ikon sliders) di kanan.
+        // Baris atas: Kembali di kiri, tanda MODE UJI dan tombol mode uji (ikon sliders) di kanan.
         // Jarak atas dibuat kecil supaya isi halaman naik dan log bisa lebih tinggi.
         val back = backButton { finish() }
         back.minimumHeight = dp(40)
@@ -339,15 +421,20 @@ class FlashRomActivity : FlasherBase() {
             background = rounded(p.card, 10, p.border)
             isClickable = true
             isFocusable = true
-            setOnClickListener {
-                startActivity(Intent(this@FlashRomActivity, FlashSettingsActivity::class.java))
-            }
+            setOnClickListener { showUjiPopup() }
             addView(SlidersIcon(this@FlashRomActivity), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        }
+        gearBtn = gear
+        // Tanda MODE UJI, warnanya sama dengan tulisan Kembali. Hanya tampil saat mode uji aktif.
+        ujiLabel = textLine(tr("MODE UJI", "TEST MODE"), 12f, medium = true, color = p.accent).apply {
+            paint.isFakeBoldText = true
+            setPadding(0, 0, dp(10), 0)
         }
         val topRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(back)
+            addView(ujiLabel)
             addView(gear, LinearLayout.LayoutParams(dp(36), dp(36)))
         }
         content.addView(topRow)
@@ -448,20 +535,33 @@ class FlashRomActivity : FlasherBase() {
         }
         checkCard.addView(resultBox)
         form.addView(checkCard)
+        // Jarak ke kotak peringatan dirapatkan supaya peringatan dan tombol JALANKAN naik
+        form.layoutParams = lp(bottom = 0)
         content.addView(form)
 
         val warn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             background = rounded(p.warnBg, 10, null)
-            layoutParams = lp(top = 8)
+            layoutParams = lp(top = 6)
         }
+        warn.addView(textLine(tr("urutan yang aman:", "safe order:"), 12f, medium = true, color = p.warnText))
         warn.addView(textLine(
-            tr("saat proses flashing rom berjalan, layar tidak boleh sampai mati atau mengunci layar.",
-                "While ROM flashing is running, the screen must not turn off or lock."),
+            tr("1. tunggu pemeriksaan file selesai\n" +
+                "2. JALANKAN dengan mode uji aktif, baca CATATAN di log\n" +
+                "3. matikan mode uji, lalu JALANKAN lagi",
+                "1. wait for the file check to finish\n" +
+                    "2. RUN with test mode on, read the CATATAN section in the log\n" +
+                    "3. turn test mode off, then RUN again"),
             12f,
             color = p.warnText
         ))
+        warn.addView(textLine(
+            tr("saat flashing berjalan, layar tidak boleh mati atau terkunci, dan jangan menekan tombol apapun.",
+                "while flashing is running, the screen must not turn off or lock."),
+            12f,
+            color = p.warnText
+        ).apply { setPadding(0, dp(4), 0, 0) })
         content.addView(warn)
 
         runBtn = btn(tr("JALANKAN", "RUN"), BtnStyle.PRIMARY) { onRunRom() }
