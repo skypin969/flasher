@@ -13,7 +13,11 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.io.IOException
 
-/** Halaman FLASH FILE IMG: pilih file, tulis ke slot aktif, lalu tampil hasil dengan tombol flash file lain dan reboot. */
+/**
+ * Halaman FLASH FILE IMG: pilih file, tulis ke partisi, lalu tampil hasil dengan tombol flash file lain dan reboot.
+ * Nama tanpa akhiran (contoh: boot) ditulis ke slot aktif jika partisinya punya slot.
+ * Nama dengan akhiran _a atau _b ditulis ke slot itu. Partisi atau perangkat tanpa slot memakai nama apa adanya.
+ */
 class FlashImgActivity : FlasherBase() {
 
     @Volatile private var imgUri: Uri? = null
@@ -72,19 +76,66 @@ class FlashImgActivity : FlasherBase() {
             alert(tr("Ukuran file tidak terbaca. Pilih ulang file .img.", "File size could not be read. Choose the .img file again."))
             return
         }
+        // Tujuan di teks konfirmasi mengikuti nama yang diketik
+        val where = when {
+            base.endsWith("_a") -> tr("partisi $base (slot a, sesuai yang diketik)", "partition $base (slot a, as typed)")
+            base.endsWith("_b") -> tr("partisi $base (slot b, sesuai yang diketik)", "partition $base (slot b, as typed)")
+            else -> tr("partisi $base (slot aktif, jika partisi ini punya slot)",
+                "partition $base (active slot, if this partition has slots)")
+        }
         confirm(
             tr(
-                "Flash $imgName ke partisi $base (slot aktif) di ${t.product} (${t.serial})?\n\n" +
+                "Flash $imgName ke $where di ${t.product} (${t.serial})?\n\n" +
                     "Aplikasi tidak bisa memastikan file ini cocok dengan perangkat. Itu tanggung jawab Anda.",
-                "Flash $imgName to partition $base (active slot) on ${t.product} (${t.serial})?\n\n" +
+                "Flash $imgName to $where on ${t.product} (${t.serial})?\n\n" +
                     "The app cannot confirm this file matches the device. That is your responsibility."
             )
         ) {
-            runTask(tr("Flash img", "Flash img")) { flashToActiveSlot(uri, base, t) }
+            runTask(tr("Flash img", "Flash img")) { flashToPartition(uri, base, t) }
         }
     }
 
-    private fun flashToActiveSlot(uri: Uri, base: String, t: DeviceInfo) {
+    /** Partisi dianggap ada jika perangkat bisa menyebutkan ukurannya. */
+    private fun partitionExists(fb: Fastboot, name: String): Boolean =
+        parseHex(fb.getvar("partition-size:$name")) != null
+
+    /**
+     * Menentukan nama partisi tujuan.
+     * 1. Nama dengan akhiran _a atau _b dipakai apa adanya.
+     * 2. Partisi yang punya slot ditulis ke slot aktif [cur].
+     * 3. Partisi tanpa slot, atau perangkat tanpa slot, memakai nama apa adanya.
+     */
+    private fun resolvePartition(fb: Fastboot, base: String, cur: String): String {
+        if (base.endsWith("_a") || base.endsWith("_b")) return base
+        val hasCur = cur == "a" || cur == "b"
+        val hasSlot = fb.getvar("has-slot:$base")?.trim()?.lowercase()
+        if (hasSlot == "yes") {
+            if (hasCur) return "${base}_$cur"
+            throw FastbootException(
+                tr("Slot aktif tidak terbaca dari perangkat. Flash dibatalkan.",
+                    "Active slot could not be read from the device. Flash cancelled.")
+            )
+        }
+        if (hasSlot == "no") {
+            log(tr("Partisi $base tidak punya slot, nama dipakai apa adanya",
+                "Partition $base has no slot, name used as is"))
+            return base
+        }
+        // Perangkat tidak menjawab has-slot: periksa langsung partisi mana yang ada
+        if (hasCur && partitionExists(fb, "${base}_$cur")) return "${base}_$cur"
+        if (partitionExists(fb, base)) {
+            log(tr("Partisi $base tidak punya slot, nama dipakai apa adanya",
+                "Partition $base has no slot, name used as is"))
+            return base
+        }
+        // Pemeriksaan tidak memberi jawaban: slot aktif jika terbaca, kalau tidak nama apa adanya
+        if (hasCur) return "${base}_$cur"
+        log(tr("Perangkat tidak punya slot A/B, nama partisi dipakai apa adanya",
+            "Device has no A/B slots, partition name used as is"))
+        return base
+    }
+
+    private fun flashToPartition(uri: Uri, base: String, t: DeviceInfo) {
         val cr = contentResolver
         val size = imgSize
         val img = ImageSrc(size) {
@@ -94,14 +145,7 @@ class FlashImgActivity : FlasherBase() {
             val now = readDevice(fb)
             ensureSameDevice(now, t)
             val cur = fb.getvar("current-slot")?.trim().orEmpty()
-            val partName = when {
-                base.endsWith("_a") || base.endsWith("_b") -> base
-                cur == "a" || cur == "b" -> "${base}_$cur"
-                else -> throw FastbootException(
-                    tr("Slot aktif tidak terbaca dari perangkat. Flash dibatalkan.",
-                        "Active slot could not be read from the device. Flash cancelled.")
-                )
-            }
+            val partName = resolvePartition(fb, base, cur)
             val map = SparseImage.scan(img)
             val outSize = map.totalBlks * map.blk
             val partSize = parseHex(fb.getvar("partition-size:$partName"))
