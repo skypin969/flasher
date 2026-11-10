@@ -12,7 +12,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
-/** Beranda: setelan bahasa, data perangkat, CEK FASTBOOT, menu flash dan ADB sideload, dan kontak. */
+/** Beranda: setelan bahasa, data perangkat, CEK FASTBOOT, menu flash, ADB sideload, SHARE FILE, dan kontak. */
 class MainActivity : FlasherBase() {
 
     private lateinit var statusBadge: TextView
@@ -172,14 +172,15 @@ class MainActivity : FlasherBase() {
         val p = pal()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            // Jarak atas dibuat kecil supaya isi halaman naik
+            setPadding(dp(16), dp(4), dp(16), dp(16))
         }
 
         // Header: judul bergradasi neon dan pilihan bahasa
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = lp(bottom = 12)
+            layoutParams = lp(bottom = 8)
         }
         val title = textLine("√- Flashmate", 22f, medium = true, color = p.text).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -239,6 +240,12 @@ class MainActivity : FlasherBase() {
             "ADB SIDELOAD",
             tr("kirim file .zip dari recovery lewat adb", "send a .zip file from recovery over adb")
         ) { startActivity(Intent(this, AdbSideloadActivity::class.java)) })
+        // SHARE FILE: kirim atau terima file besar antar HP. Tidak perlu CEK FASTBOOT.
+        root.addView(neonRow(
+            "SHR", p.soft, NeonTheme.MAGENTA,
+            "SHARE FILE",
+            tr("kirim atau terima file besar lewat Wi-Fi", "send or receive large files over Wi-Fi")
+        ) { startActivity(Intent(this, ShareFileActivity::class.java)) })
 
         lockNote = textLine(
             tr("Tekan CEK FASTBOOT dulu sebelum flash.", "Press CHECK FASTBOOT DEVICE before flashing."),
