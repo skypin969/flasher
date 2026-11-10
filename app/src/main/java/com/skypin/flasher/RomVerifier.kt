@@ -190,8 +190,8 @@ private fun slotBase(p: String): String = when {
 }
 
 /**
- * Nama yang dicoba di daftar untuk satu partisi: nama asli, tanpa akhiran slot, lalu dengan _a dan _b.
- * Script bisa memakai _ab, sedangkan daftar memakai _a dan _b.
+ * Nama yang dicoba di daftar untuk satu partisi: nama asli, tanpa akhiran slot, lalu dengan _a, _b, dan _ab.
+ * Script dan daftar bisa memakai akhiran slot yang berbeda untuk partisi yang sama (contoh: modem_a dan modem_ab).
  */
 private fun keysFor(parts: List<String>): List<String> {
     val keys = LinkedHashSet<String>()
@@ -201,6 +201,7 @@ private fun keysFor(parts: List<String>): List<String> {
         keys.add(base)
         keys.add(base + "_a")
         keys.add(base + "_b")
+        keys.add(base + "_ab")
     }
     return keys.toList()
 }
