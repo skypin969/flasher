@@ -92,9 +92,10 @@ sealed class Step {
         override fun describe(): String = "Hapus partisi $part"
     }
 
-    /** Blok script: erase hanya jika tipe partisi raw atau ext4. */
-    class EraseIfRawOrExt4(val part: String) : Step() {
-        override fun describe(): String = "Hapus partisi $part (hanya jika tipenya raw atau ext4)"
+    /** Blok script: erase hanya jika tipe partisi termasuk [types], yaitu tipe yang diperiksa script (raw, ext4). */
+    class EraseIfRawOrExt4(val part: String, val types: MutableSet<String>) : Step() {
+        override fun describe(): String =
+            "Hapus partisi $part (hanya jika tipenya ${types.sorted().joinToString(" atau ")})"
     }
 
     class Flash(val part: String, val file: String, val checked: Boolean, val onlyIfCrc: Boolean) : Step() {
@@ -140,7 +141,7 @@ fun parseScript(text: String): ParsedScript {
     var productRegex: String? = null
     val steps = ArrayList<Step>()
     val errors = ArrayList<String>()
-    val seenPartType = HashSet<String>()
+    val partTypeSteps = HashMap<String, Step.EraseIfRawOrExt4>()
     var skipBlock = false
     var crcBlock = false
 
@@ -151,30 +152,46 @@ fun parseScript(text: String): ParsedScript {
             crcBlock = false
             continue
         }
+        // Pengecekan tipe partisi dibaca juga di dalam blok yang dilewati, karena script bisa
+        // menaruh pengecekan ext4 di dalam cabang else dari pengecekan raw.
+        if (line.startsWith("fastboot") && line.contains("getvar partition-type:")) {
+            val part = Regex("partition-type:([A-Za-z0-9_.-]+)").find(line)?.groupValues?.get(1)
+            val type = Regex("grep[^\"]*\"\\^?partition-type:[A-Za-z0-9_.-]+: *([A-Za-z0-9]+)\"").find(line)?.groupValues?.get(1)
+            if (part != null) {
+                var step = partTypeSteps[part]
+                if (step == null) {
+                    step = Step.EraseIfRawOrExt4(part, HashSet())
+                    partTypeSteps[part] = step
+                    steps.add(step)
+                }
+                // Tipe tidak terbaca dari script: pakai raw dan ext4 seperti script Xiaomi pada umumnya
+                if (type != null) step.types.add(type) else step.types.addAll(listOf("raw", "ext4"))
+            }
+            skipBlock = true
+            continue
+        }
         if (skipBlock || !line.startsWith("fastboot")) continue
 
         when {
             line.contains("getvar product") -> {
-                productRegex = Regex("grep -E \"([^\"]*)\"").find(line)?.groupValues?.get(1)
+                // Script bisa memakai grep -E atau grep biasa
+                productRegex = Regex("grep(?: -E)? \"([^\"]*)\"").find(line)?.groupValues?.get(1)
             }
             line.contains("getvar crc") -> {
                 crcBlock = true
-            }
-            line.contains("getvar partition-type:") -> {
-                val part = Regex("partition-type:([A-Za-z0-9_.-]+)").find(line)?.groupValues?.get(1)
-                if (part != null && seenPartType.add(part)) steps.add(Step.EraseIfRawOrExt4(part))
-                skipBlock = true
             }
             line.contains("getvar") -> Unit
             else -> {
                 // Baris pengecekan berikutnya (kecuali komentar dan baris kosong).
                 val next = lines.drop(idx + 1).firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
                 val checked = next?.startsWith(CHECK_FAIL) == true
+                // Titik koma di ujung baris adalah pemisah perintah, bukan bagian dari nama
                 val body = line.removePrefix("fastboot").replace("\$*", "").substringBefore("||").trim()
+                    .trimEnd(';').trim()
                 val tok = body.split(Regex("\\s+"))
                 when (tok[0]) {
                     "flash" -> {
-                        val name = Regex("images/([^\\s`\"']+)").find(body)?.groupValues?.get(1)
+                        val name = Regex("images/([^\\s`\"';]+)").find(body)?.groupValues?.get(1)
                         if (tok.size >= 2 && name != null) {
                             steps.add(Step.Flash(tok[1], "images/$name", checked, crcBlock))
                         } else {
@@ -276,7 +293,7 @@ fun runPlan(fb: Fastboot, src: RomSource, plan: RomPlan, dry: Boolean, log: (Str
         when (step) {
             is Step.EraseIfRawOrExt4 -> {
                 val t = fb.getvar("partition-type:${step.part}") ?: ""
-                if (t != "raw" && t != "ext4") {
+                if (t !in step.types) {
                     log("$tag Partisi ${step.part} bertipe '$t', tidak dihapus")
                 } else if (dry) {
                     log("$tag [UJI] ${step.describe()} (tipe $t)")
