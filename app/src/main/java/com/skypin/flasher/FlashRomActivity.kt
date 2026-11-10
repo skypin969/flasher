@@ -317,24 +317,24 @@ class FlashRomActivity : FlasherBase() {
         }
     }
 
-    /** Log setinggi 180 dp, lebih pendek dari halaman lain supaya tombol JALANKAN di atasnya tetap terlihat. */
+    /** Log setinggi 205 dp, lebih pendek dari halaman lain supaya tombol JALANKAN di atasnya tetap terlihat. */
     private fun logPanel(): LinearLayout = makeLog().also { section ->
         section.getChildAt(1).layoutParams =
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(180))
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(205))
     }
 
     private fun buildUi() {
         val p = pal()
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(8))
+            setPadding(dp(16), dp(4), dp(16), dp(8))
         }
 
-        // Baris atas: Kembali di kiri, tombol Pengaturan (ikon sliders) di kanan
+        // Baris atas: Kembali di kiri, tombol Pengaturan (ikon sliders) di kanan.
+        // Jarak atas dibuat kecil supaya isi halaman naik dan log bisa lebih tinggi.
         val back = backButton { finish() }
-        back.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            topMargin = dp(8)
-        }
+        back.minimumHeight = dp(40)
+        back.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         val gear = FrameLayout(this).apply {
             background = rounded(p.card, 10, p.border)
             isClickable = true
@@ -348,14 +348,14 @@ class FlashRomActivity : FlasherBase() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(back)
-            addView(gear, LinearLayout.LayoutParams(dp(36), dp(36)).apply { topMargin = dp(8) })
+            addView(gear, LinearLayout.LayoutParams(dp(36), dp(36)))
         }
         content.addView(topRow)
 
         content.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true).apply {
             paint.isFakeBoldText = true
             applyNeonText(this)
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, dp(4), 0, 0)
         })
         val tgt = Session.target
         content.addView(
