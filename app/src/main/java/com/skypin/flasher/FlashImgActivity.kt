@@ -287,6 +287,8 @@ class FlashImgActivity : FlasherBase() {
 
         val bFlash = btn(tr("FLASH FILE", "FLASH FILE"), BtnStyle.PRIMARY) { onFlash() }
         formPanel.addView(bFlash)
+        // Jarak ke tulisan Target sama dengan FLASH FASTBOOT ROM: 10 dp
+        formPanel.layoutParams = lp(top = 10, bottom = 0)
         content.addView(formPanel)
 
         resultPanel = box()
