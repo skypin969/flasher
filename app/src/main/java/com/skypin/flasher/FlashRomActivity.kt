@@ -371,9 +371,7 @@ class FlashRomActivity : FlasherBase() {
                 withFastboot { fb ->
                     val now = readDevice(fb)
                     ensureSameDevice(now, t)
-                    val built = buildPlan(src, script, now, romName)
-                    // Pemeriksaan partisi hanya membaca dari HP, dan hanya dijalankan jika rencana dasar sudah tanpa kesalahan
-                    val p = if (built.errors.isEmpty()) checkTargetPartitions(fb, src, built) else built
+                    val p = buildPlan(src, script, now, romName)
                     if (p.errors.isNotEmpty()) {
                         // Rencana tidak boleh jalan: catat alasannya, lalu matikan JALANKAN sampai folder dipilih lagi
                         log(describePlan(p, src))
