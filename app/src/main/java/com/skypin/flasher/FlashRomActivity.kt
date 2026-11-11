@@ -148,7 +148,7 @@ class FlashRomActivity : FlasherBase() {
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = rounded(p.warnBg, 12, null)
-            setPadding(dp(11), dp(10), dp(11), dp(11))
+            setPadding(dp(12), dp(11), dp(12), dp(12))
         }
         body.addView(textLine(tr("urutan yang aman:", "safe order:"), 13f, medium = true, color = p.warnText))
         body.addView(textLine(
@@ -160,23 +160,23 @@ class FlashRomActivity : FlasherBase() {
                     "2. turn on TEST MODE with the settings icon at the top right, then RUN. Test mode only reads the target phone and builds a plan, it sends no data\n" +
                     "3. read CATATAN and the step list in the log. If something is blocked, fix it first\n" +
                     "4. turn TEST MODE off, then RUN again for the real flash"),
-            11f,
+            12f,
             color = p.warnText
         ).apply { setPadding(0, dp(5), 0, 0) })
         body.addView(textLine(
             tr("jika CATATAN menulis daftar CRC tidak dikirim, flash tetap jalan dengan batas kiriman HP. Isi file sudah diperiksa sebelum flash, tetapi tidak diperiksa lagi saat dikirim.",
                 "if CATATAN says the CRC list is not sent, the flash still runs with the phone's send limit. The files were checked before the flash, but not checked again while they are sent."),
-            11f,
+            12f,
             color = p.warnText
-        ).apply { setPadding(0, dp(7), 0, 0) })
+        ).apply { setPadding(0, dp(9), 0, 0) })
         body.addView(textLine(
             tr("flash bisa menghapus data, jadi backup dulu. Selama flash, layar HP yang menjalankan aplikasi ini tidak boleh mati atau terkunci dan juga jangan menekan tombol apapun.",
                 "flashing can erase data, so back up first. During the flash, the screen of the phone running this app must not turn off or lock, and do not press any button."),
-            11f,
+            12f,
             color = p.warnText
-        ).apply { setPadding(0, dp(7), 0, 0) })
+        ).apply { setPadding(0, dp(9), 0, 0) })
 
-        val popup = PopupWindow(body, dp(280), LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        val popup = PopupWindow(body, dp(300), LinearLayout.LayoutParams.WRAP_CONTENT, true)
         popup.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         popup.isOutsideTouchable = true
         popup.elevation = dp(8).toFloat()
@@ -607,8 +607,8 @@ class FlashRomActivity : FlasherBase() {
         }
         checkCard.addView(resultBox)
         form.addView(checkCard)
-        // Jarak ke kotak peringatan dirapatkan supaya peringatan dan tombol JALANKAN naik
-        form.layoutParams = lp(bottom = 0)
+        // Isi di bawah judul turun 10 dp supaya tidak terlalu rapat dengan keterangan target
+        form.layoutParams = lp(top = 10, bottom = 0)
         content.addView(form)
 
         runBtn = btn(tr("JALANKAN", "RUN"), BtnStyle.PRIMARY) { onRunRom() }
