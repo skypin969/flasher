@@ -1,15 +1,27 @@
 package com.skypin.flasher
 
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.drawable.GradientDrawable
+import android.net.NetworkInfo
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.net.wifi.p2p.WifiP2pConfig
+import android.net.wifi.p2p.WifiP2pDevice
+import android.net.wifi.p2p.WifiP2pInfo
+import android.net.wifi.p2p.WifiP2pManager
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.StatFs
 import android.os.SystemClock
 import android.provider.MediaStore
@@ -17,6 +29,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -31,15 +44,10 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.SocketAddress
 import java.net.SocketTimeoutException
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -48,12 +56,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.CRC32
 
 private const val REQ_PICK_SHARE = 1010
+private const val REQ_P2P_PERM = 1011
 
-/** Penerima mendengar pencarian di port ini (UDP). */
-private const val PORT_FIND = 47821
-/** Pengirim mendengar jawaban penerima di port ini (UDP). */
-private const val PORT_HERE = 47822
-/** Isi file dikirim lewat port ini (TCP). */
+/** Layanan yang diiklankan penerima lewat Wi-Fi Direct. Pengirim mencari layanan dengan jenis ini. */
+private const val SHARE_SERVICE_TYPE = "_flashmate._tcp"
+/** Isi file dikirim lewat port ini (TCP), di dalam sambungan Wi-Fi Direct. */
 private const val PORT_DATA = 47823
 
 private const val SHARE_MAGIC = "FMSHARE1"
@@ -66,9 +73,24 @@ private const val REPLY_REFUSED = 4
 private const val SHARE_CHUNK = 1 shl 20
 private const val SOCKET_BUFFER = 4 shl 20
 
+/** Batas jumlah file dalam satu kiriman. */
+private const val MAX_FILES = 500
+
+/** Berapa lama pengirim menunggu penerima menekan Izinkan di dialog sistem. */
+private const val CONNECT_WAIT_SEC = 60L
+/** Batas waktu satu perintah Wi-Fi Direct ke sistem. */
+private const val P2P_CALL_SEC = 15L
+/** Penerima yang tidak terlihat selama ini dihapus dari daftar. */
+private const val PEER_TIMEOUT_MS = 30000L
+/** Pencarian Wi-Fi Direct dimulai ulang selang waktu ini supaya penerima baru ikut terdaftar. */
+private const val PEER_REFRESH_MS = 10000L
+/** Selang waktu pengecekan daftar penerima di layar kirim. */
+private const val TICK_MS = 4000L
+
 /**
- * Halaman SHARE FILE: kirim atau terima file besar antar dua HP yang sama-sama memasang Flashmate
- * dan tersambung ke jaringan Wi-Fi atau hotspot yang sama. File berjalan langsung antar HP, tanpa internet.
+ * Halaman SHARE FILE: kirim atau terima file besar antar dua HP yang memasang Flashmate.
+ * Kedua HP tidak perlu satu jaringan Wi-Fi atau hotspot: HP penerima membuat grup Wi-Fi Direct,
+ * lalu HP pengirim masuk ke grup itu dan file dikirim langsung antar HP.
  * Setelah sampai, isi file dicek dengan CRC32 di kedua sisi.
  */
 class ShareFileActivity : FlasherBase() {
@@ -90,18 +112,54 @@ class ShareFileActivity : FlasherBase() {
         }
     }
 
-    private class Peer(val name: String, val code: String, val host: InetAddress, var seen: Long)
+    /** Penerima yang ditemukan lewat Wi-Fi Direct. [address] adalah alamat perangkat Wi-Fi Direct-nya. */
+    private class Peer(val name: String, val code: String, val address: String, var seen: Long)
 
     private class Target(val out: OutputStream, val where: String, val finish: (Boolean) -> Unit)
 
+    /** Satu file yang dipilih pengirim. */
+    private class SendItem(val uri: Uri, val name: String, val size: Long)
+
     @Volatile private var sess: Sess? = null
-    @Volatile private var fileUri: Uri? = null
-    @Volatile private var fileName = ""
-    @Volatile private var fileSize = 0L
+    /** File yang dipilih untuk dikirim, sesuai urutan pilihan. */
+    private val files = ArrayList<SendItem>()
+    /** Penerima yang dipilih di daftar. Null jika belum ada yang dipilih. */
+    @Volatile private var selectedPeer: Peer? = null
     private var roleSend = true
     private var pendingDialog: AlertDialog? = null
     private val peers = LinkedHashMap<String, Peer>()
     private var lock: WifiManager.MulticastLock? = null
+    /** Tindakan yang ditunda sampai izin lokasi atau NEARBY_WIFI_DEVICES diberikan. */
+    private var pendingAfterPermission: (() -> Unit)? = null
+
+    // Wi-Fi Direct
+    private var p2p: WifiP2pManager? = null
+    private var p2pChannel: WifiP2pManager.Channel? = null
+    private var p2pReceiver: BroadcastReceiver? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var lastRestart = 0L
+    private var lastWarn = ""
+    /** Dibuka saat pengirim menunggu penerima menyetujui koneksi, dan dilepas saat koneksi terbentuk. */
+    @Volatile private var connectLatch: CountDownLatch? = null
+    @Volatile private var connectedInfo: WifiP2pInfo? = null
+
+    private val p2pTick = object : Runnable {
+        override fun run() {
+            val s = sess ?: return
+            if (s.dead || !roleSend) return
+            if (!busy) {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastRestart >= PEER_REFRESH_MS) {
+                    lastRestart = now
+                    restartServiceDiscovery()
+                }
+                val before = peers.size
+                peers.values.removeAll { now - it.seen > PEER_TIMEOUT_MS }
+                if (peers.size != before) renderPeers()
+            }
+            mainHandler.postDelayed(this, TICK_MS)
+        }
+    }
 
     private lateinit var titleText: TextView
     private lateinit var subText: TextView
@@ -119,7 +177,9 @@ class ShareFileActivity : FlasherBase() {
     private lateinit var recvFree: TextView
     private lateinit var recvWarn: TextView
 
-    private lateinit var fileInfo: TextView
+    private lateinit var fileSummary: TextView
+    private lateinit var fileList: LinearLayout
+    private lateinit var sendGo: Button
     private lateinit var peersBox: LinearLayout
     private lateinit var peersEmpty: TextView
     private lateinit var sendNet: TextView
@@ -134,33 +194,56 @@ class ShareFileActivity : FlasherBase() {
     private lateinit var progSpeed: TextView
     private lateinit var progEta: TextView
 
+    // ---------- Siklus halaman ----------
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        p2p = getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
+        ensureChannel()
+        registerP2pReceiver()
         buildUi()
         showHome()
     }
 
     override fun onDestroy() {
         cancelSession()
+        unregisterP2pReceiver()
         super.onDestroy()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_PICK_SHARE || resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        val (name, size) = try {
-            queryNameSize(uri)
-        } catch (e: Exception) {
-            Pair("file", 0L)
+        // Bisa banyak file: lewat ClipData, atau satu file lewat data biasa
+        val uris = ArrayList<Uri>()
+        data?.clipData?.let { clip ->
+            for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
         }
-        fileUri = uri
-        fileName = name
-        fileSize = size
-        fileInfo.text = "$name\n${human(size)}"
-        fileInfo.setTextColor(pal().text)
-        log(tr("File dipilih: $name (${human(size)})", "File chosen: $name (${human(size)})"))
+        if (uris.isEmpty()) data?.data?.let { uris.add(it) }
+        for (uri in uris) {
+            val (name, size) = try {
+                queryNameSize(uri)
+            } catch (e: Exception) {
+                Pair("file", 0L)
+            }
+            files.add(SendItem(uri, name, size))
+            log(tr("File dipilih: $name (${human(size)})", "File chosen: $name (${human(size)})"))
+        }
+        renderFiles()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_P2P_PERM) return
+        val action = pendingAfterPermission
+        pendingAfterPermission = null
+        if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            action?.invoke()
+        } else {
+            alert(tr("Izin untuk mencari hp lain ditolak. Tanpa izin ini, Wi-Fi Direct tidak bisa dipakai.",
+                "Permission to find other phones was denied. Wi-Fi Direct cannot be used without it."))
+        }
     }
 
     // ---------- Sesi ----------
@@ -172,7 +255,10 @@ class ShareFileActivity : FlasherBase() {
         s.dead = true
         pendingDialog?.let { d -> runCatching { d.dismiss() } }
         pendingDialog = null
+        mainHandler.removeCallbacks(p2pTick)
+        connectLatch?.countDown()
         Thread { s.closeAll() }.start()
+        teardownP2p()
         releaseLock()
     }
 
@@ -191,7 +277,7 @@ class ShareFileActivity : FlasherBase() {
             l.acquire()
             lock = l
         } catch (e: Exception) {
-            // Tanpa kunci ini pencarian tetap dicoba
+            // Tanpa kunci ini sambungan tetap dicoba
         }
     }
 
@@ -201,7 +287,232 @@ class ShareFileActivity : FlasherBase() {
         runCatching { if (l.isHeld) l.release() }
     }
 
-    // ---------- Jaringan ----------
+    // ---------- Wi-Fi Direct ----------
+
+    /** Menyiapkan saluran Wi-Fi Direct dan pendengar layanan. Mengembalikan null jika perangkat tidak mendukung. */
+    private fun ensureChannel(): WifiP2pManager.Channel? {
+        p2pChannel?.let { return it }
+        val m = p2p ?: return null
+        val ch = m.initialize(this, mainLooper, WifiP2pManager.ChannelListener { p2pChannel = null }) ?: return null
+        p2pChannel = ch
+        m.setDnsSdResponseListeners(
+            ch,
+            WifiP2pManager.DnsSdServiceResponseListener { _, _, _ -> },
+            WifiP2pManager.DnsSdTxtRecordListener { _, record, device -> onTxtRecord(record, device) }
+        )
+        return ch
+    }
+
+    /** Mendengarkan perubahan koneksi Wi-Fi Direct. Dipasang sekali saat halaman dibuka. */
+    @Suppress("DEPRECATION")
+    private fun registerP2pReceiver() {
+        if (p2pReceiver != null) return
+        val r = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent == null) return
+                if (intent.action != WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION) return
+                val ni = intent.getParcelableExtra<NetworkInfo>(WifiP2pManager.EXTRA_NETWORK_INFO)
+                if (ni?.isConnected == true) {
+                    val ch = p2pChannel ?: return
+                    val m = p2p ?: return
+                    m.requestConnectionInfo(ch, WifiP2pManager.ConnectionInfoListener { info -> onConnectionInfo(info) })
+                }
+            }
+        }
+        registerReceiver(r, IntentFilter(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION))
+        p2pReceiver = r
+    }
+
+    private fun unregisterP2pReceiver() {
+        val r = p2pReceiver ?: return
+        p2pReceiver = null
+        runCatching { unregisterReceiver(r) }
+    }
+
+    private fun onConnectionInfo(info: WifiP2pInfo?) {
+        if (info == null || !info.groupFormed) return
+        connectedInfo = info
+        connectLatch?.countDown()
+    }
+
+    private fun actionListener(onOk: () -> Unit = {}, onFail: (Int) -> Unit = {}): WifiP2pManager.ActionListener =
+        object : WifiP2pManager.ActionListener {
+            override fun onSuccess() = onOk()
+            override fun onFailure(reason: Int) = onFail(reason)
+        }
+
+    private fun p2pReason(reason: Int): String = when (reason) {
+        WifiP2pManager.P2P_UNSUPPORTED -> tr("hp ini tidak mendukung Wi-Fi Direct", "this phone does not support Wi-Fi Direct")
+        WifiP2pManager.BUSY -> tr("Wi-Fi Direct sedang sibuk. coba lagi sebentar.", "Wi-Fi Direct is busy. try again shortly.")
+        WifiP2pManager.NO_SERVICE_REQUESTS -> tr("pencarian belum siap. coba lagi.", "search is not ready. try again.")
+        else -> tr("Wi-Fi Direct gagal (kode $reason). pastikan Wi-Fi menyala.",
+            "Wi-Fi Direct failed (code $reason). make sure Wi-Fi is on.")
+    }
+
+    private fun warnP2p(msg: String) {
+        if (msg == lastWarn) return
+        lastWarn = msg
+        log(tr("GAGAL: ", "FAILED: ") + msg)
+    }
+
+    /**
+     * Menjalankan satu perintah Wi-Fi Direct di thread layar lalu menunggu jawabannya.
+     * Mengembalikan null jika berhasil, atau pesan gagal. Hanya dipanggil dari thread kerja, bukan dari thread layar.
+     */
+    private fun p2pCall(call: (WifiP2pManager, WifiP2pManager.Channel, WifiP2pManager.ActionListener) -> Unit): String? {
+        val m = p2p ?: return tr("Wi-Fi Direct tidak tersedia di hp ini", "Wi-Fi Direct is not available on this phone")
+        val ch = ensureChannel() ?: return tr("Wi-Fi Direct belum siap. coba lagi.", "Wi-Fi Direct is not ready. try again.")
+        val latch = CountDownLatch(1)
+        val failure = arrayOfNulls<String>(1)
+        runOnUiThread {
+            call(m, ch, actionListener(
+                onOk = { latch.countDown() },
+                onFail = { r ->
+                    failure[0] = p2pReason(r)
+                    latch.countDown()
+                }
+            ))
+        }
+        if (!latch.await(P2P_CALL_SEC, TimeUnit.SECONDS)) {
+            return tr("Wi-Fi Direct tidak menjawab. coba lagi.", "Wi-Fi Direct did not answer. try again.")
+        }
+        return failure[0]
+    }
+
+    /** Mencari layanan Flashmate dari hp lain. Dipanggil ulang berkala karena pencarian Wi-Fi Direct bisa berhenti sendiri. */
+    private fun restartServiceDiscovery() {
+        val m = p2p ?: return
+        val ch = ensureChannel() ?: return
+        // Setiap langkah menunggu langkah sebelumnya selesai, supaya tidak saling mendahului
+        val addAndDiscover: () -> Unit = {
+            m.addServiceRequest(ch, WifiP2pDnsSdServiceRequest.newInstance(), actionListener(
+                onOk = {
+                    m.discoverServices(ch, actionListener(onFail = { r -> warnP2p(p2pReason(r)) }))
+                },
+                onFail = { r -> warnP2p(p2pReason(r)) }
+            ))
+        }
+        m.clearServiceRequests(ch, actionListener(onOk = addAndDiscover, onFail = { addAndDiscover() }))
+    }
+
+    /** Dipanggil saat hp lain menjawab pencarian. Hanya hp yang memasang Flashmate dan sedang menerima yang masuk daftar. */
+    private fun onTxtRecord(record: Map<String, String>?, device: WifiP2pDevice?) {
+        val s = sess ?: return
+        if (!roleSend || !live(s) || device == null || record == null) return
+        if (record["fm"] != "1") return
+        val code = record["code"] ?: return
+        val key = device.deviceAddress ?: return
+        val name = (record["name"] ?: device.deviceName ?: "Android").take(40)
+        val now = SystemClock.elapsedRealtime()
+        val old = peers[key]
+        if (old != null && old.code == code && old.name == name) {
+            old.seen = now
+        } else {
+            peers[key] = Peer(name, code, key, now)
+            renderPeers()
+            log(tr("ditemukan: $name ($code)", "found: $name ($code)"))
+        }
+    }
+
+    /**
+     * Penerima membuat grup Wi-Fi Direct dan mengiklankan kodenya, supaya pengirim bisa menemukannya.
+     * Melempar IOException jika salah satu langkah gagal.
+     */
+    private fun setupReceiverGroup(code: String) {
+        p2pCall { m, ch, l -> m.removeGroup(ch, l) }
+        val groupErr = p2pCall { m, ch, l -> m.createGroup(ch, l) }
+        if (groupErr != null) throw IOException(groupErr)
+        val txt = hashMapOf("fm" to "1", "code" to code, "name" to deviceName())
+        val service = WifiP2pDnsSdServiceInfo.newInstance("flashmate$code", SHARE_SERVICE_TYPE, txt)
+        p2pCall { m, ch, l -> m.clearLocalServices(ch, l) }
+        val svcErr = p2pCall { m, ch, l -> m.addLocalService(ch, service, l) }
+        if (svcErr != null) throw IOException(svcErr)
+        p2pCall { m, ch, l -> m.discoverPeers(ch, l) }
+    }
+
+    /** Membuat sambungan Wi-Fi Direct ke hp penerima dan mengembalikan alamat hp penerima di dalam grup itu. Melempar IOException jika gagal. */
+    private fun connectWifiDirect(s: Sess, peer: Peer): InetAddress {
+        p2pCall { m, ch, l -> m.removeGroup(ch, l) }
+        connectedInfo = null
+        val armed = CountDownLatch(1)
+        connectLatch = armed
+        val config = WifiP2pConfig().apply {
+            deviceAddress = peer.address
+            // Pengirim minta jadi anggota grup, supaya hp penerima jadi pemilik grup dan alamatnya tetap
+            groupOwnerIntent = 0
+        }
+        val err = p2pCall { m, ch, l -> m.connect(ch, config, l) }
+        if (err != null) {
+            connectLatch = null
+            throw IOException(err)
+        }
+        log(tr("menunggu ${peer.name} menyetujui koneksi...", "waiting for ${peer.name} to accept the connection..."))
+        val got = armed.await(CONNECT_WAIT_SEC, TimeUnit.SECONDS)
+        connectLatch = null
+        if (s.dead) throw IOException(tr("dibatalkan", "cancelled"))
+        if (!got) {
+            throw IOException(tr("${peer.name} tidak menyetujui koneksi dalam $CONNECT_WAIT_SEC detik",
+                "${peer.name} did not accept the connection within $CONNECT_WAIT_SEC seconds"))
+        }
+        val info = connectedInfo ?: throw IOException(tr("koneksi Wi-Fi Direct tidak terbentuk",
+            "the Wi-Fi Direct connection was not formed"))
+        if (info.isGroupOwner) {
+            throw IOException(tr("hp ini jadi pemilik grup, bukan anggota. coba kirim lagi.",
+                "this phone became the group owner instead of a member. try sending again."))
+        }
+        return info.groupOwnerAddress
+            ?: throw IOException(tr("alamat hp penerima tidak terbaca", "the receiver's address could not be read"))
+    }
+
+    /** Melepas grup, layanan, dan pencarian Wi-Fi Direct supaya Wi-Fi kembali normal setelah sesi selesai. */
+    private fun teardownP2p() {
+        val m = p2p ?: return
+        val ch = p2pChannel ?: return
+        runOnUiThread {
+            runCatching { m.clearServiceRequests(ch, null) }
+            runCatching { m.clearLocalServices(ch, null) }
+            runCatching { m.stopPeerDiscovery(ch, null) }
+            runCatching { m.removeGroup(ch, null) }
+        }
+    }
+
+    private fun p2pPermission(): String =
+        if (Build.VERSION.SDK_INT >= 33) "android.permission.NEARBY_WIFI_DEVICES" else "android.permission.ACCESS_FINE_LOCATION"
+
+    /** Meminta izin yang dibutuhkan Wi-Fi Direct, lalu menjalankan [action] jika sudah diberikan. */
+    private fun withP2pPermission(action: () -> Unit) {
+        val perm = p2pPermission()
+        if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) {
+            action()
+            return
+        }
+        pendingAfterPermission = action
+        requestPermissions(arrayOf(perm), REQ_P2P_PERM)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wifiOn(): Boolean = try {
+        (applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)?.isWifiEnabled == true
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun refreshNet() {
+        val on = wifiOn()
+        val text = if (on) tr("Wi-Fi Direct siap", "Wi-Fi Direct ready") else tr("Wi-Fi belum menyala", "Wi-Fi is off")
+        recvNet.text = text
+        sendNet.text = text
+        val warn = if (on) {
+            null
+        } else {
+            tr("nyalakan Wi-Fi dulu. Wi-Fi Direct tidak bisa jalan saat Wi-Fi mati.",
+                "turn on Wi-Fi first. Wi-Fi Direct does not work while Wi-Fi is off.")
+        }
+        for (w in listOf(recvWarn, sendWarn)) {
+            w.text = warn ?: ""
+            w.visibility = if (warn != null) View.VISIBLE else View.GONE
+        }
+    }
 
     private fun deviceName(): String {
         val n = try {
@@ -211,109 +522,6 @@ class ShareFileActivity : FlasherBase() {
         }
         val name = if (n.isNullOrBlank()) Build.MODEL ?: "Android" else n
         return name.replace("|", " ").trim().take(40).ifBlank { "Android" }
-    }
-
-    /** Alamat broadcast semua jaringan yang aktif di HP ini, termasuk hotspot milik HP ini sendiri. */
-    private fun broadcastAddresses(): List<InetAddress> {
-        val out = ArrayList<InetAddress>()
-        try {
-            val all = NetworkInterface.getNetworkInterfaces()
-            if (all != null) {
-                for (nif in Collections.list(all)) {
-                    if (!nif.isUp || nif.isLoopback) continue
-                    for (ia in nif.interfaceAddresses) {
-                        val b = ia.broadcast ?: continue
-                        out.add(b)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // Daftar jaringan tidak terbaca: pakai alamat umum di bawah
-        }
-        if (out.isEmpty()) {
-            runCatching { out.add(InetAddress.getByName("255.255.255.255")) }
-        }
-        return out
-    }
-
-    private fun localIps(): List<String> {
-        val out = ArrayList<String>()
-        try {
-            val all = NetworkInterface.getNetworkInterfaces() ?: return out
-            for (nif in Collections.list(all)) {
-                if (!nif.isUp || nif.isLoopback) continue
-                // Jaringan data seluler tidak dipakai untuk kirim antar HP
-                val n = nif.name.lowercase()
-                if (n.startsWith("rmnet") || n.startsWith("ccmni") || n.startsWith("dummy")) continue
-                for (a in Collections.list(nif.inetAddresses)) {
-                    if (a is Inet4Address && !a.isLoopbackAddress) out.add(a.hostAddress ?: continue)
-                }
-            }
-        } catch (e: Exception) {
-            // Kosong berarti tidak terbaca
-        }
-        return out
-    }
-
-    /** Keterangan jaringan untuk ditampilkan, dan teks peringatan jika 2,4 GHz atau belum tersambung (null jika tidak perlu). */
-    @Suppress("DEPRECATION")
-    private fun networkInfo(): Pair<String, String?> {
-        var freq = -1
-        var speed = -1
-        try {
-            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            val info = wm?.connectionInfo
-            if (info != null) {
-                freq = info.frequency
-                speed = info.linkSpeed
-            }
-        } catch (e: Exception) {
-            // Tidak terbaca
-        }
-        if (freq > 0) {
-            val band = when {
-                freq >= 5925 -> "6 GHz"
-                freq >= 4900 -> "5 GHz"
-                else -> "2,4 GHz"
-            }
-            val text = if (speed > 0) "Wi-Fi $band · $speed Mbps" else "Wi-Fi $band"
-            val warn = if (freq < 4900) {
-                tr("jaringan ini 2,4 GHz, kirim file besar akan lambat. jika bisa, pakai hotspot 5 GHz.",
-                    "this network is 2.4 GHz, large files will be slow. use a 5 GHz hotspot if you can.")
-            } else {
-                null
-            }
-            return Pair(text, warn)
-        }
-        if (localIps().isNotEmpty()) {
-            return Pair(tr("hotspot hp ini", "this phone's hotspot"), null)
-        }
-        return Pair(
-            tr("belum tersambung", "not connected"),
-            tr("hp ini belum tersambung ke Wi-Fi atau hotspot. sambungkan dulu kedua hp ke jaringan yang sama.",
-                "this phone is not connected to Wi-Fi or a hotspot. connect both phones to the same network first.")
-        )
-    }
-
-    private fun refreshNet() {
-        val (text, warn) = networkInfo()
-        recvNet.text = text
-        sendNet.text = tr("jaringan: $text", "network: $text")
-        for (w in listOf(recvWarn, sendWarn)) {
-            w.text = warn ?: ""
-            w.visibility = if (warn != null) View.VISIBLE else View.GONE
-        }
-    }
-
-    private fun sendAll(udp: DatagramSocket, text: String, port: Int) {
-        val data = text.toByteArray(Charsets.UTF_8)
-        for (addr in broadcastAddresses()) {
-            try {
-                udp.send(DatagramPacket(data, data.size, addr, port))
-            } catch (e: Exception) {
-                // Satu jaringan gagal tidak menghentikan jaringan lain
-            }
-        }
     }
 
     private fun freeSpace(): Long = try {
@@ -385,13 +593,17 @@ class ShareFileActivity : FlasherBase() {
             Toast.makeText(this, tr("Tunggu proses sebelumnya berhenti dulu.", "Wait for the previous task to stop."), Toast.LENGTH_SHORT).show()
             return
         }
+        withP2pPermission { startReceiveNow() }
+    }
+
+    private fun startReceiveNow() {
         cancelSession()
         val s = Sess()
         sess = s
         roleSend = false
         val code = (1000 + (Math.random() * 9000).toInt()).coerceIn(1000, 9999).toString()
         codeText.text = code
-        recvState.text = tr("menunggu pengirim...", "waiting for sender...")
+        recvState.text = tr("menyiapkan Wi-Fi Direct...", "setting up Wi-Fi Direct...")
         recvName.text = deviceName()
         val free = freeSpace()
         recvFree.text = if (free >= 0L) human(free) else "-"
@@ -404,53 +616,16 @@ class ShareFileActivity : FlasherBase() {
     }
 
     private fun receiveSession(s: Sess, code: String) {
-        val name = deviceName()
         try {
             val server = s.own(ServerSocket())
             server.reuseAddress = true
             server.receiveBufferSize = SOCKET_BUFFER
             server.bind(InetSocketAddress(PORT_DATA))
-            val udp = s.own(DatagramSocket(null as SocketAddress?))
-            udp.reuseAddress = true
-            udp.broadcast = true
-            udp.bind(InetSocketAddress(PORT_FIND))
 
-            val ips = localIps()
+            log(tr("menyiapkan grup Wi-Fi Direct...", "setting up a Wi-Fi Direct group..."))
+            setupReceiverGroup(code)
             log(tr("siap menerima, kode $code", "ready to receive, code $code"))
-            log(tr("alamat hp ini: ", "this phone's address: ") + (if (ips.isEmpty()) "-" else ips.joinToString(", ")))
-
-            val here = "$SHARE_MAGIC|HERE|$code|$name"
-            // Memberi tahu keberadaan HP ini tiap detik
-            Thread {
-                var n = 0
-                while (!udp.isClosed && !s.dead) {
-                    sendAll(udp, here, PORT_HERE)
-                    n++
-                    if (n % 3 == 0) ui(s) { if (recvPanel.visibility == View.VISIBLE) refreshNet() }
-                    try {
-                        Thread.sleep(1000L)
-                    } catch (e: InterruptedException) {
-                        break
-                    }
-                }
-            }.start()
-            // Menjawab pencarian dari pengirim
-            Thread {
-                val buf = ByteArray(512)
-                val reply = here.toByteArray(Charsets.UTF_8)
-                while (!udp.isClosed && !s.dead) {
-                    try {
-                        val pk = DatagramPacket(buf, buf.size)
-                        udp.receive(pk)
-                        val text = String(pk.data, pk.offset, pk.length, Charsets.UTF_8)
-                        if (text.startsWith("$SHARE_MAGIC|FIND")) {
-                            udp.send(DatagramPacket(reply, reply.size, pk.address, pk.port))
-                        }
-                    } catch (e: Exception) {
-                        if (udp.isClosed) break
-                    }
-                }
-            }.start()
+            ui(s) { recvState.text = tr("menunggu pengirim...", "waiting for sender...") }
 
             while (!s.dead) {
                 val sock = s.own(server.accept())
@@ -468,6 +643,7 @@ class ShareFileActivity : FlasherBase() {
             }
         } finally {
             s.closeAll()
+            teardownP2p()
             runOnUiThread { if (sess === s) releaseLock() }
         }
     }
@@ -476,11 +652,11 @@ class ShareFileActivity : FlasherBase() {
         val inp: DataInputStream,
         val out: DataOutputStream,
         val sender: String,
-        val name: String,
-        val size: Long
+        val names: List<String>,
+        val sizes: List<Long>
     )
 
-    /** Membaca pembuka sambungan masuk dan meminta persetujuan pengguna. Null jika sambungan ini tidak dilanjutkan. */
+    /** Membaca pembuka sambungan masuk (nama dan ukuran semua file), lalu meminta persetujuan sekali untuk semua. Null jika sambungan ini tidak dilanjutkan. */
     private fun readIncoming(s: Sess, sock: Socket, code: String): Incoming? {
         try {
             sock.soTimeout = 15000
@@ -489,30 +665,37 @@ class ShareFileActivity : FlasherBase() {
             if (inp.readUTF() != SHARE_MAGIC) return null
             val theirCode = inp.readUTF()
             val sender = inp.readUTF().take(40)
-            val name = cleanName(inp.readUTF())
-            val size = inp.readLong()
+            val count = inp.readInt()
+            if (count !in 1..MAX_FILES) return null
+            val names = ArrayList<String>()
+            val sizes = ArrayList<Long>()
+            for (i in 0 until count) {
+                names.add(cleanName(inp.readUTF()))
+                sizes.add(inp.readLong())
+            }
             if (theirCode != code) {
                 out.writeByte(REPLY_BAD_CODE)
                 out.flush()
                 log(tr("sambungan ditolak: kode tidak sama", "connection rejected: code does not match"))
                 return null
             }
-            if (size <= 0L) return null
+            if (sizes.any { it <= 0L }) return null
+            val total = sizes.sum()
             val free = freeSpace()
-            if (free in 0L until size) {
+            if (free in 0L until total) {
                 out.writeByte(REPLY_NO_SPACE)
                 out.flush()
-                log(tr("ruang kosong tidak cukup untuk $name (${human(size)})",
-                    "not enough free space for $name (${human(size)})"))
+                log(tr("ruang kosong tidak cukup untuk ${names.size} file (${human(total)})",
+                    "not enough free space for ${names.size} files (${human(total)})"))
                 return null
             }
-            if (!askAccept(s, sender, name, size)) {
+            if (!askAccept(s, sender, names, sizes)) {
                 out.writeByte(REPLY_REFUSED)
                 out.flush()
                 log(tr("kiriman dari $sender ditolak", "transfer from $sender refused"))
                 return null
             }
-            return Incoming(inp, out, sender, name, size)
+            return Incoming(inp, out, sender, names, sizes)
         } catch (e: Exception) {
             if (s.dead) throw e
             // Sambungan yang bukan dari Flashmate atau putus sebelum mulai: abaikan, tetap menunggu
@@ -520,74 +703,156 @@ class ShareFileActivity : FlasherBase() {
         }
     }
 
-    /** Menangani satu sambungan masuk. True jika file sudah diterima sampai selesai. Gagal di tengah melempar kesalahan. */
+    /** Menerima semua file dalam satu sambungan. True jika sambungan ini sudah selesai. Gagal sebelum file pertama masuk melempar kesalahan. */
     private fun handleIncoming(s: Sess, sock: Socket, code: String): Boolean {
         val req = readIncoming(s, sock, code) ?: return false
         val inp = req.inp
         val out = req.out
         val sender = req.sender
-        val name = req.name
-        val size = req.size
+        val count = req.names.size
+        val total = req.sizes.sum()
 
         // Dari sini file benar-benar diterima
-        log(tr("menerima $name (${human(size)}) dari $sender", "receiving $name (${human(size)}) from $sender"))
+        log(tr("menerima $count file (${human(total)}) dari $sender", "receiving $count files (${human(total)}) from $sender"))
         ui(s) {
             titleText.text = tr("TERIMA FILE", "RECEIVE FILE")
             subText.text = tr("menerima dari $sender", "receiving from $sender")
-            progFile.text = name
-            showProgress(0L, size, 0L, -1L)
+            progFile.text = if (count == 1) req.names[0] else tr("$count file", "$count files")
+            showProgress(0L, total, 0L, -1L)
             show(progPanel)
         }
-        val target = openTarget(name)
-        var ok = false
-        val meter = Meter(s, size)
+        val okFlags = BooleanArray(count)
+        val meter = Meter(s, total)
+        val buf = ByteArray(SHARE_CHUNK)
+        var base = 0L
+        var whereSaved = ""
+        var lost: Exception? = null
         try {
             sock.soTimeout = 30000
             out.writeByte(REPLY_OK)
             out.flush()
-            val buf = ByteArray(SHARE_CHUNK)
-            val crc = CRC32()
-            var got = 0L
-            while (got < size) {
+            for (i in 0 until count) {
                 if (s.dead) throw IOException(tr("dibatalkan", "cancelled"))
-                val want = minOf(buf.size.toLong(), size - got).toInt()
-                val n = inp.read(buf, 0, want)
-                if (n < 0) throw IOException(tr("sambungan terputus sebelum file selesai", "connection lost before the file finished"))
-                target.out.write(buf, 0, n)
-                crc.update(buf, 0, n)
-                got += n
-                meter.tick(got)
+                val name = req.names[i]
+                val size = req.sizes[i]
+                log(tr("menerima (${i + 1}/$count) $name", "receiving (${i + 1}/$count) $name"))
+                ui(s) { progFile.text = "(${i + 1}/$count) $name" }
+                var dst: Target? = null
+                var werr: Exception? = null
+                try {
+                    val opened = openTarget(name)
+                    dst = opened
+                    whereSaved = opened.where
+                } catch (e: Exception) {
+                    werr = e
+                }
+                val crc = CRC32()
+                var got = 0L
+                try {
+                    while (got < size) {
+                        if (s.dead) throw IOException(tr("dibatalkan", "cancelled"))
+                        val want = minOf(buf.size.toLong(), size - got).toInt()
+                        val n = inp.read(buf, 0, want)
+                        if (n < 0) throw IOException(tr("sambungan terputus sebelum file selesai", "connection lost before the file finished"))
+                        val target = dst
+                        if (werr == null && target != null) {
+                            try {
+                                target.out.write(buf, 0, n)
+                            } catch (e: Exception) {
+                                werr = e
+                            }
+                        }
+                        // Kalau tulisan gagal, data tetap dibaca sampai habis supaya urutan kiriman tidak rusak
+                        crc.update(buf, 0, n)
+                        got += n
+                        meter.tick(base + got)
+                    }
+                } catch (e: Exception) {
+                    // File yang belum utuh harus dibuang, supaya tidak tertinggal dan terpakai untuk flash
+                    dst?.let { t ->
+                        runCatching { t.out.close() }
+                        runCatching { t.finish(false) }
+                    }
+                    throw e
+                }
+                val theirs = inp.readLong()
+                val fin = dst
+                if (fin != null) {
+                    if (werr == null) {
+                        try {
+                            fin.out.flush()
+                        } catch (e: Exception) {
+                            werr = e
+                        }
+                    }
+                    runCatching { fin.out.close() }
+                }
+                val ok = werr == null && theirs == crc.value
+                if (fin != null) runCatching { fin.finish(ok) }
+                okFlags[i] = ok
+                base += size
+                if (ok) {
+                    log(tr("cek isi file: cocok ($name)", "file content check: match ($name)"))
+                } else {
+                    val why = werr?.let { errText(it) }
+                        ?: tr("isi tidak sama dengan kiriman (CRC berbeda)", "contents differ from what was sent (CRC mismatch)")
+                    log(tr("GAGAL: $name, $why", "FAILED: $name, $why"))
+                }
+                out.writeByte(if (ok) 1 else 0)
+                out.flush()
             }
-            target.out.flush()
-            val theirs = inp.readLong()
-            ok = theirs == crc.value
-        } finally {
-            // File ditutup dan disahkan dulu (atau dihapus jika tidak utuh), baru pengirim diberi kabar
-            runCatching { target.out.close() }
-            runCatching { target.finish(ok) }
+        } catch (e: Exception) {
+            if (s.dead) throw e
+            lost = e
         }
-        runCatching {
-            out.writeByte(if (ok) 1 else 0)
-            out.flush()
-        }
-        if (!ok) throw IOException(tr("isi file tidak sama dengan kiriman (CRC berbeda)", "file contents differ from what was sent (CRC mismatch)"))
+
         val sec = meter.seconds()
-        log(tr("selesai dalam ${duration(sec)}", "finished in ${duration(sec)}"))
-        log(tr("cek isi file: cocok", "file content check: match"))
-        log(tr("disimpan di ${target.where}", "saved to ${target.where}"))
+        val okCount = okFlags.count { it }
+        val err = lost
+        if (err != null) {
+            log(tr("GAGAL: ", "FAILED: ") + errText(err))
+            if (okCount == 0) throw err
+        }
+        log(tr("selesai dalam ${duration(sec)}: $okCount dari $count file diterima",
+            "finished in ${duration(sec)}: $okCount of $count files received"))
+        if (whereSaved.isNotEmpty()) log(tr("disimpan di $whereSaved", "saved to $whereSaved"))
         ui(s) {
-            showSuccess(
-                tr("Terima Berhasil", "Receive Successful"),
-                name, size, sec,
-                tr("disimpan di", "saved to"), target.where,
-                tr("TERIMA FILE LAIN", "RECEIVE ANOTHER FILE")
-            )
+            if (okCount == count) {
+                showSuccess(
+                    tr("Terima Berhasil", "Receive Successful"),
+                    if (count == 1) req.names[0] else tr("$count file", "$count files"),
+                    total, sec,
+                    tr("disimpan di", "saved to"), whereSaved,
+                    tr("TERIMA FILE LAIN", "RECEIVE ANOTHER FILE")
+                )
+            } else {
+                showPartial(
+                    tr("Sebagian gagal", "Partly failed"),
+                    okCount, count,
+                    req.names.filterIndexed { i, _ -> !okFlags[i] },
+                    sender,
+                    tr("TERIMA FILE LAIN", "RECEIVE ANOTHER FILE")
+                )
+            }
         }
         return true
     }
 
-    /** Menanyakan ke pengguna apakah kiriman diterima. Menunggu sampai dijawab atau sesi dibatalkan. */
-    private fun askAccept(s: Sess, sender: String, name: String, size: Long): Boolean {
+    /** Menanyakan ke pengguna apakah kiriman diterima. Satu jawaban berlaku untuk semua file. Menunggu sampai dijawab atau sesi dibatalkan. */
+    private fun askAccept(s: Sess, sender: String, names: List<String>, sizes: List<Long>): Boolean {
+        val total = sizes.sum()
+        val list = names.take(6).mapIndexed { i, n -> "$n (${human(sizes[i])})" }.joinToString("\n")
+        val more = if (names.size > 6) {
+            tr("\ndan ${names.size - 6} file lainnya", "\nand ${names.size - 6} more files")
+        } else {
+            ""
+        }
+        val head = if (names.size == 1) {
+            tr("Terima file ini dari $sender?", "Accept this file from $sender?")
+        } else {
+            tr("Terima ${names.size} file (${human(total)}) dari $sender?",
+                "Accept ${names.size} files (${human(total)}) from $sender?")
+        }
         val latch = CountDownLatch(1)
         val yes = AtomicBoolean(false)
         runOnUiThread {
@@ -596,8 +861,7 @@ class ShareFileActivity : FlasherBase() {
                 return@runOnUiThread
             }
             pendingDialog = AlertDialog.Builder(this)
-                .setMessage(tr("Terima file ini dari $sender?\n\n$name\n${human(size)}",
-                    "Accept this file from $sender?\n\n$name\n${human(size)}"))
+                .setMessage("$head\n\n$list$more")
                 .setCancelable(false)
                 .setPositiveButton(tr("Terima", "Accept")) { _, _ ->
                     yes.set(true)
@@ -653,11 +917,16 @@ class ShareFileActivity : FlasherBase() {
     // ---------- KIRIM ----------
 
     private fun startSend() {
+        withP2pPermission { startSendNow() }
+    }
+
+    private fun startSendNow() {
         cancelSession()
         val s = Sess()
         sess = s
         roleSend = true
         peers.clear()
+        selectedPeer = null
         renderPeers()
         refreshNet()
         titleText.text = tr("KIRIM FILE", "SEND FILE")
@@ -665,82 +934,21 @@ class ShareFileActivity : FlasherBase() {
         show(sendPanel)
         acquireLock()
         log("== " + tr("KIRIM FILE", "SEND FILE") + " ==")
-        log(tr("mencari penerima...", "looking for receivers..."))
-        Thread { discover(s) }.start()
+        log(tr("mencari penerima lewat Wi-Fi Direct...", "looking for receivers over Wi-Fi Direct..."))
+        lastRestart = 0L
+        mainHandler.post(p2pTick)
     }
-
-    /** Mencari HP penerima di jaringan yang sama sampai sesi berakhir atau pengiriman dimulai. */
-    private fun discover(s: Sess) {
-        val udp = try {
-            val d = s.own(DatagramSocket(null as SocketAddress?))
-            d.reuseAddress = true
-            d.broadcast = true
-            d.soTimeout = 500
-            d.bind(InetSocketAddress(PORT_HERE))
-            d
-        } catch (e: Exception) {
-            if (live(s)) log(tr("GAGAL mencari penerima: ", "FAILED to look for receivers: ") + errText(e))
-            return
-        }
-        discoverSocket = udp
-        val find = "$SHARE_MAGIC|FIND"
-        val buf = ByteArray(512)
-        var lastFind = 0L
-        var n = 0
-        while (!udp.isClosed && !s.dead) {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastFind >= 1000L) {
-                lastFind = now
-                sendAll(udp, find, PORT_FIND)
-                n++
-                val refresh = n % 3 == 0
-                ui(s) {
-                    // Penerima yang tidak terdengar lagi selama 5 detik dihapus dari daftar
-                    val before = peers.size
-                    val iter = peers.values.iterator()
-                    while (iter.hasNext()) {
-                        if (now - iter.next().seen > 5000L) iter.remove()
-                    }
-                    if (peers.size != before) renderPeers()
-                    if (refresh && sendPanel.visibility == View.VISIBLE) refreshNet()
-                }
-            }
-            try {
-                val pk = DatagramPacket(buf, buf.size)
-                udp.receive(pk)
-                val parts = String(pk.data, pk.offset, pk.length, Charsets.UTF_8).split("|", limit = 4)
-                if (parts.size == 4 && parts[0] == SHARE_MAGIC && parts[1] == "HERE") {
-                    val host = pk.address
-                    val key = host.hostAddress ?: continue
-                    val code = parts[2]
-                    val name = parts[3]
-                    val seen = SystemClock.elapsedRealtime()
-                    ui(s) {
-                        val old = peers[key]
-                        if (old != null && old.code == code && old.name == name) {
-                            old.seen = seen
-                        } else {
-                            peers[key] = Peer(name, code, host, seen)
-                            renderPeers()
-                            log(tr("ditemukan: $name ($code)", "found: $name ($code)"))
-                        }
-                    }
-                }
-            } catch (e: SocketTimeoutException) {
-                // Tidak ada jawaban dalam setengah detik: lanjut mencari
-            } catch (e: Exception) {
-                if (udp.isClosed) break
-            }
-        }
-    }
-
-    @Volatile private var discoverSocket: DatagramSocket? = null
 
     private fun renderPeers() {
         val p = pal()
+        // Penerima yang sudah tidak terlihat dilepas dari pilihan
+        selectedPeer?.let { sp ->
+            if (peers.values.none { it.address == sp.address && it.code == sp.code }) selectedPeer = null
+        }
         peersBox.removeAllViews()
         peersEmpty.visibility = if (peers.isEmpty()) View.VISIBLE else View.GONE
         for (peer in peers.values) {
+            val picked = selectedPeer?.let { it.address == peer.address && it.code == peer.code } == true
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -756,58 +964,171 @@ class ShareFileActivity : FlasherBase() {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
             col.addView(textLine(peer.name, 15f, medium = true, color = p.text))
-            col.addView(textLine(tr("siap menerima", "ready to receive"), 12f, color = p.muted))
+            col.addView(textLine(
+                if (picked) tr("dipilih · tekan KIRIM", "selected · press SEND") else tr("Wi-Fi Direct · siap", "Wi-Fi Direct · ready"),
+                12f,
+                color = if (picked) p.accent else p.muted
+            ))
             row.addView(col)
             row.addView(textLine(peer.code, 16f, medium = true, color = p.accent, mono = true))
             peersBox.addView(row)
         }
+        updateSendButton()
     }
 
+    /** Mengingat penerima yang dipilih. Pengiriman baru dimulai saat tombol KIRIM ditekan. */
     private fun onPickPeer(peer: Peer) {
+        if (sess == null) return
+        selectedPeer = peer
+        renderPeers()
+    }
+
+    /** Daftar file yang dipilih: nama, ukuran, tombol HAPUS, serta ringkasan jumlah dan total ukuran. */
+    private fun renderFiles() {
+        val p = pal()
+        fileList.removeAllViews()
+        for ((i, f) in files.withIndex()) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            col.addView(textLine(f.name, 12f, color = p.text, mono = true))
+            col.addView(textLine(human(f.size), 11f, color = p.muted))
+            row.addView(col)
+            row.addView(textLine(tr("HAPUS", "REMOVE"), 11f, medium = true, color = p.danger).apply {
+                setPadding(dp(8), dp(4), 0, dp(4))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    if (i < files.size) files.removeAt(i)
+                    renderFiles()
+                }
+            })
+            fileList.addView(row)
+        }
+        val total = files.sumOf { it.size }
+        fileSummary.text = if (files.isEmpty()) {
+            tr("belum ada file dipilih", "no file chosen yet")
+        } else {
+            tr("${files.size} file · ${human(total)}", "${files.size} files · ${human(total)}")
+        }
+        updateSendButton()
+    }
+
+    private fun updateSendButton() {
+        val n = files.size
+        val on = n > 0 && selectedPeer != null
+        sendGo.text = tr("KIRIM $n FILE", "SEND $n FILES")
+        sendGo.isEnabled = on
+        sendGo.alpha = if (on) 1f else 0.4f
+    }
+
+    /** Tombol KIRIM: cek file dan penerima, lalu konfirmasi dan mulai mengirim semua file yang dipilih. */
+    private fun sendSelected() {
         val s = sess ?: return
-        val uri = fileUri
-        if (uri == null) {
-            alert(tr("Pilih file yang mau dikirim dulu.", "Choose the file to send first."))
+        val peer = selectedPeer ?: return
+        if (!wifiOn()) {
+            alert(tr("Nyalakan Wi-Fi dulu. Wi-Fi Direct tidak bisa jalan saat Wi-Fi mati.",
+                "Turn on Wi-Fi first. Wi-Fi Direct does not work while Wi-Fi is off."))
             return
         }
-        if (fileSize <= 0L) {
-            alert(tr("Ukuran file tidak terbaca. Pilih ulang filenya.", "File size could not be read. Choose the file again."))
+        if (files.isEmpty()) {
+            alert(tr("Pilih file yang mau dikirim dulu.", "Choose the files to send first."))
             return
+        }
+        for (f in files) {
+            if (f.size <= 0L) {
+                alert(tr("Ukuran ${f.name} tidak terbaca. Hapus file itu, lalu pilih ulang.",
+                    "The size of ${f.name} could not be read. Remove it, then choose it again."))
+                return
+            }
+            // Semua file dicek bisa dibaca dulu, supaya tidak ada file yang putus di tengah sambungan
+            val readable = try {
+                contentResolver.openInputStream(f.uri)?.use { true } ?: false
+            } catch (e: Exception) {
+                false
+            }
+            if (!readable) {
+                alert(tr("Tidak bisa membaca ${f.name}. Hapus file itu, lalu pilih ulang.",
+                    "Cannot read ${f.name}. Remove it, then choose it again."))
+                return
+            }
         }
         if (busy) {
             Toast.makeText(this, tr("Tunggu proses sebelumnya berhenti dulu.", "Wait for the previous task to stop."), Toast.LENGTH_SHORT).show()
             return
         }
-        val name = fileName
-        val size = fileSize
-        confirm(tr("Kirim $name (${human(size)}) ke ${peer.name} (kode ${peer.code})?",
-            "Send $name (${human(size)}) to ${peer.name} (code ${peer.code})?")) {
+        val batch = ArrayList(files)
+        val n = batch.size
+        val total = batch.sumOf { it.size }
+        confirm(tr("Kirim $n file (${human(total)}) ke ${peer.name} (kode ${peer.code})?",
+            "Send $n files (${human(total)}) to ${peer.name} (code ${peer.code})?")) {
             if (!live(s) || busy) return@confirm
-            // Pencarian dihentikan, lalu pengiriman dimulai
-            val udp = discoverSocket
-            discoverSocket = null
-            Thread { runCatching { udp?.close() } }.start()
             subText.text = tr("menunggu ${peer.name} menerima...", "waiting for ${peer.name} to accept...")
-            runTask(tr("KIRIM FILE", "SEND FILE")) { sendSession(s, peer, uri, name, size) }
+            runTask(tr("KIRIM FILE", "SEND FILE")) { connectAndSend(s, peer, batch) }
         }
     }
 
-    private fun sendSession(s: Sess, peer: Peer, uri: Uri, name: String, size: Long) {
+    /** Menyambung ke hp penerima lewat Wi-Fi Direct, lalu mengirim semua file. Jika sambungan gagal, pesannya ditampilkan. */
+    private fun connectAndSend(s: Sess, peer: Peer, batch: List<SendItem>) {
+        val host = try {
+            connectWifiDirect(s, peer)
+        } catch (e: Exception) {
+            val msg = errText(e)
+            log(tr("GAGAL: ", "FAILED: ") + msg)
+            ui(s) { showFailure(msg) }
+            s.closeAll()
+            teardownP2p()
+            runOnUiThread { if (sess === s) releaseLock() }
+            return
+        }
+        sendSession(s, peer, host, batch)
+    }
+
+    /** Membuka sambungan data ke hp penerima. Beberapa kali dicoba, karena grup Wi-Fi Direct baru kadang belum siap seketika. */
+    private fun openDataSocket(s: Sess, host: InetAddress): Socket {
+        var last: IOException? = null
+        for (attempt in 1..4) {
+            if (s.dead) throw IOException(tr("dibatalkan", "cancelled"))
+            val sock = s.own(Socket())
+            try {
+                sock.sendBufferSize = SOCKET_BUFFER
+                sock.connect(InetSocketAddress(host, PORT_DATA), 5000)
+                return sock
+            } catch (e: IOException) {
+                last = e
+                runCatching { sock.close() }
+                Thread.sleep(1000L)
+            }
+        }
+        throw last ?: IOException(tr("tidak bisa tersambung ke hp penerima", "cannot connect to the receiving phone"))
+    }
+
+    /** Mengirim semua file dalam [batch] ke [peer] lewat satu sambungan. Satu file yang gagal tidak menghentikan file berikutnya. */
+    private fun sendSession(s: Sess, peer: Peer, host: InetAddress, batch: List<SendItem>) {
+        val total = batch.sumOf { it.size }
+        val okFlags = BooleanArray(batch.size)
         try {
             log(tr("menyambung ke ${peer.name}...", "connecting to ${peer.name}..."))
-            val sock = s.own(Socket())
-            sock.sendBufferSize = SOCKET_BUFFER
-            sock.connect(InetSocketAddress(peer.host, PORT_DATA), 8000)
+            val sock = openDataSocket(s, host)
             val out = DataOutputStream(BufferedOutputStream(sock.getOutputStream(), 1 shl 16))
             val inp = DataInputStream(sock.getInputStream())
             out.writeUTF(SHARE_MAGIC)
             out.writeUTF(peer.code)
             out.writeUTF(deviceName())
-            out.writeUTF(name.take(200))
-            out.writeLong(size)
+            out.writeInt(batch.size)
+            for (f in batch) {
+                out.writeUTF(f.name.take(200))
+                out.writeLong(f.size)
+            }
             out.flush()
 
-            // Penerima perlu waktu untuk menekan Terima
+            // Penerima perlu waktu untuk menekan Terima (sekali untuk semua file)
             sock.soTimeout = 120000
             when (inp.readByte().toInt()) {
                 REPLY_OK -> {}
@@ -817,61 +1138,102 @@ class ShareFileActivity : FlasherBase() {
                 else -> throw IOException(tr("jawaban hp penerima tidak dikenal", "unknown reply from the receiving phone"))
             }
 
-            log(tr("tersambung, mengirim ${human(size)}...", "connected, sending ${human(size)}..."))
+            log(tr("tersambung, mengirim ${batch.size} file (${human(total)})...",
+                "connected, sending ${batch.size} files (${human(total)})..."))
             ui(s) {
                 subText.text = tr("mengirim ke ${peer.name}", "sending to ${peer.name}")
-                progFile.text = name
-                showProgress(0L, size, 0L, -1L)
+                progFile.text = if (batch.size == 1) batch[0].name else tr("${batch.size} file", "${batch.size} files")
+                showProgress(0L, total, 0L, -1L)
                 show(progPanel)
             }
-            val meter = Meter(s, size)
-            val crc = CRC32()
+            val meter = Meter(s, total)
             val buf = ByteArray(SHARE_CHUNK)
-            var sent = 0L
-            val src = contentResolver.openInputStream(uri)
-                ?: throw IOException(tr("tidak bisa membuka file", "cannot open the file"))
-            src.use { input ->
-                while (sent < size) {
-                    if (s.dead) throw IOException(tr("dibatalkan", "cancelled"))
-                    val want = minOf(buf.size.toLong(), size - sent).toInt()
-                    val n = input.read(buf, 0, want)
-                    if (n < 0) throw IOException(tr("file berakhir sebelum ukurannya tercapai", "the file ended before its stated size"))
-                    out.write(buf, 0, n)
-                    crc.update(buf, 0, n)
-                    sent += n
-                    meter.tick(sent)
+            var base = 0L
+            for ((i, f) in batch.withIndex()) {
+                if (s.dead) throw IOException(tr("dibatalkan", "cancelled"))
+                log(tr("mengirim (${i + 1}/${batch.size}) ${f.name}", "sending (${i + 1}/${batch.size}) ${f.name}"))
+                ui(s) { progFile.text = "(${i + 1}/${batch.size}) ${f.name}" }
+                val crc = CRC32()
+                var sent = 0L
+                val src = contentResolver.openInputStream(f.uri)
+                    ?: throw IOException(tr("tidak bisa membuka ${f.name}", "cannot open ${f.name}"))
+                src.use { input ->
+                    while (sent < f.size) {
+                        if (s.dead) throw IOException(tr("dibatalkan", "cancelled"))
+                        val want = minOf(buf.size.toLong(), f.size - sent).toInt()
+                        val n = input.read(buf, 0, want)
+                        if (n < 0) throw IOException(tr("${f.name} berakhir sebelum ukurannya tercapai",
+                            "${f.name} ended before its stated size"))
+                        out.write(buf, 0, n)
+                        crc.update(buf, 0, n)
+                        sent += n
+                        meter.tick(base + sent)
+                    }
                 }
-            }
-            out.writeLong(crc.value)
-            out.flush()
-            // Penerima menyelesaikan tulisan ke penyimpanan, lalu membandingkan CRC
-            sock.soTimeout = 180000
-            val verdict = inp.readByte().toInt()
-            if (verdict != 1) {
-                throw IOException(tr("isi file di hp penerima tidak sama (CRC berbeda)", "file contents on the receiving phone differ (CRC mismatch)"))
+                out.writeLong(crc.value)
+                out.flush()
+                // Penerima menyelesaikan tulisan file ini, lalu membandingkan CRC dan mengirim hasilnya
+                sock.soTimeout = 180000
+                val verdict = inp.readByte().toInt()
+                base += f.size
+                okFlags[i] = verdict == 1
+                log(
+                    if (verdict == 1) tr("cocok: ${f.name}", "match: ${f.name}")
+                    else tr("GAGAL: isi ${f.name} di hp penerima tidak sama", "FAILED: ${f.name} differs on the receiving phone")
+                )
             }
             val sec = meter.seconds()
-            log(tr("selesai dalam ${duration(sec)}", "finished in ${duration(sec)}"))
-            log(tr("cek isi file: cocok", "file content check: match"))
+            val okCount = okFlags.count { it }
+            log(tr("selesai dalam ${duration(sec)}: $okCount dari ${batch.size} file berhasil",
+                "finished in ${duration(sec)}: $okCount of ${batch.size} files succeeded"))
+            dropSent(batch, okFlags)
             ui(s) {
-                showSuccess(
-                    tr("Kirim Berhasil", "Send Successful"),
-                    name, size, sec,
-                    tr("penerima", "receiver"), peer.name,
-                    tr("KIRIM FILE LAIN", "SEND ANOTHER FILE")
-                )
+                if (okCount == batch.size) {
+                    showSuccess(
+                        tr("Kirim Berhasil", "Send Successful"),
+                        if (batch.size == 1) batch[0].name else tr("${batch.size} file", "${batch.size} files"),
+                        total, sec,
+                        tr("penerima", "receiver"), peer.name,
+                        tr("KIRIM FILE LAIN", "SEND ANOTHER FILE")
+                    )
+                } else {
+                    showPartial(
+                        tr("Sebagian gagal", "Partly failed"),
+                        okCount, batch.size,
+                        batch.filterIndexed { i, _ -> !okFlags[i] }.map { it.name },
+                        peer.name,
+                        tr("KIRIM ULANG YANG GAGAL", "RESEND FAILED")
+                    )
+                }
             }
         } catch (e: Exception) {
             if (live(s)) {
                 val msg = errText(e)
+                val okCount = okFlags.count { it }
+                dropSent(batch, okFlags)
                 log(tr("GAGAL: ", "FAILED: ") + msg)
-                ui(s) { showFailure(msg) }
+                val note = if (okCount > 0) {
+                    tr(" $okCount file sudah terkirim dan dihapus dari daftar.", " $okCount files were sent and removed from the list.")
+                } else {
+                    ""
+                }
+                ui(s) { showFailure(msg + note) }
             } else {
                 log(tr("dibatalkan", "cancelled"))
             }
         } finally {
             s.closeAll()
+            teardownP2p()
             runOnUiThread { if (sess === s) releaseLock() }
+        }
+    }
+
+    /** Menghapus dari daftar file yang sudah berhasil, supaya kirim ulang hanya mengirim sisanya. */
+    private fun dropSent(batch: List<SendItem>, okFlags: BooleanArray) {
+        val done = batch.filterIndexed { i, _ -> okFlags[i] }.toSet()
+        runOnUiThread {
+            files.removeAll(done)
+            renderFiles()
         }
     }
 
@@ -885,7 +1247,7 @@ class ShareFileActivity : FlasherBase() {
 
     private fun showHome() {
         titleText.text = "SHARE FILE"
-        subText.text = tr("kirim file besar antar hp lewat Wi-Fi", "send large files between phones over Wi-Fi")
+        subText.text = tr("kirim file besar antar hp lewat Wi-Fi Direct", "send large files between phones over Wi-Fi Direct")
         show(homePanel)
     }
 
@@ -926,6 +1288,31 @@ class ShareFileActivity : FlasherBase() {
         show(resultPanel)
     }
 
+    /** Hasil saat sebagian file berhasil. Daftar file yang gagal ditampilkan supaya bisa dicoba lagi. */
+    private fun showPartial(head: String, okCount: Int, total: Int, failedNames: List<String>, who: String, button: String) {
+        val p = pal()
+        resultBox.removeAllViews()
+        resultBox.addView(textLine(head, 16f, medium = true, color = p.danger))
+        resultBox.addView(textLine(
+            tr("$okCount dari $total file berhasil. hp lawan: $who", "$okCount of $total files succeeded. other phone: $who"),
+            13f,
+            color = p.text
+        ).apply { setPadding(0, dp(6), 0, dp(4)) })
+        resultBox.addView(textLine(tr("yang gagal:", "failed:"), 12f, medium = true, color = p.muted))
+        for (n in failedNames.take(10)) {
+            resultBox.addView(textLine(n, 12f, color = p.danger, mono = true))
+        }
+        if (failedNames.size > 10) {
+            resultBox.addView(textLine(
+                tr("dan ${failedNames.size - 10} file lainnya", "and ${failedNames.size - 10} more files"),
+                12f,
+                color = p.muted
+            ))
+        }
+        resultBox.addView(btn(button, BtnStyle.PRIMARY) { again() })
+        show(resultPanel)
+    }
+
     private fun warnBox(text: String): TextView {
         val p = pal()
         return textLine(text, 12f, color = p.warnText).apply {
@@ -933,6 +1320,15 @@ class ShareFileActivity : FlasherBase() {
             background = rounded(p.warnBg, 10, null)
             layoutParams = lp(bottom = 8)
         }
+    }
+
+    /** Catatan Wi-Fi di halaman pilihan peran. Di Android 12 ke bawah, lokasi juga harus menyala. */
+    private fun wifiNote(): String {
+        val base = tr("wi-fi harus menyala. internet wi-fi terputus selama kirim. tidak perlu satu jaringan yang sama.",
+            "Wi-Fi must be on. Internet over Wi-Fi drops during a transfer. both phones do not need the same network.")
+        if (Build.VERSION.SDK_INT >= 33) return base
+        return base + " " + tr("di Android 12 ke bawah, lokasi (GPS) juga harus menyala.",
+            "on Android 12 and older, location (GPS) must be on too.")
     }
 
     private fun panel(): LinearLayout = LinearLayout(this).apply {
@@ -978,10 +1374,7 @@ class ShareFileActivity : FlasherBase() {
         homeBox.addView(neonOutlineBtn(tr("TERIMA FILE", "RECEIVE FILE")) { startReceive() })
         homeBox.addView(caption(tr("hp ini menunggu kiriman dari hp lain", "this phone waits for a file from another phone")))
         homePanel.addView(homeBox)
-        homePanel.addView(warnBox(
-            tr("kedua hp harus tersambung ke jaringan yang sama. cara tercepat: nyalakan hotspot 5 GHz di salah satu hp, lalu hp satunya sambung ke hotspot itu.",
-                "both phones must be on the same network. fastest way: turn on a 5 GHz hotspot on one phone, then connect the other phone to it.")
-        ))
+        homePanel.addView(warnBox(wifiNote()))
         content.addView(homePanel)
 
         // 2. Penerima menunggu
@@ -1002,7 +1395,7 @@ class ShareFileActivity : FlasherBase() {
         recvBox.addView(codeCard)
         val infoCard = subCard()
         recvName = kvRow(infoCard, tr("nama hp ini", "this phone's name"))
-        recvNet = kvRow(infoCard, tr("jaringan", "network"))
+        recvNet = kvRow(infoCard, tr("wi-fi direct", "wi-fi direct"))
         kvRow(infoCard, tr("simpan ke", "save to")).text =
             if (Build.VERSION.SDK_INT >= 29) "Download/Flashmate" else tr("folder aplikasi", "app folder")
         recvFree = kvRow(infoCard, tr("ruang kosong", "free space"))
@@ -1014,24 +1407,32 @@ class ShareFileActivity : FlasherBase() {
         recvPanel.addView(recvWarn)
         content.addView(recvPanel)
 
-        // 3. Pengirim: pilih file dan penerima
+        // 3. Pengirim: pilih file, pilih penerima, lalu kirim
         sendPanel = panel()
         val sendBox = box()
         val fileCard = subCard()
         fileCard.layoutParams = lp(top = 0)
-        fileCard.addView(caption(tr("file yang dikirim", "file to send")))
-        fileCard.addView(neonOutlineBtn(tr("PILIH FILE", "CHOOSE FILE")) {
+        fileCard.addView(caption(tr("file yang dikirim", "files to send")))
+        fileSummary = textLine("", 13f, medium = true, color = p.text)
+        fileSummary.setPadding(0, dp(4), 0, 0)
+        fileCard.addView(fileSummary)
+        fileList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fileCard.addView(fileList)
+        fileCard.addView(neonOutlineBtn(tr("TAMBAH FILE", "ADD FILES")) {
             val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
             i.addCategory(Intent.CATEGORY_OPENABLE)
             i.type = "*/*"
+            i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             startActivityForResult(i, REQ_PICK_SHARE)
         })
-        fileInfo = textLine(tr("belum ada file yang dipilih", "no file chosen yet"), 12f, color = p.muted, mono = true)
-        fileInfo.setPadding(0, dp(8), 0, 0)
-        fileCard.addView(fileInfo)
+        fileCard.addView(neonOutlineBtn(tr("KOSONGKAN", "CLEAR")) {
+            files.clear()
+            renderFiles()
+        })
         sendBox.addView(fileCard)
         val peerCard = subCard()
-        peerCard.addView(caption(tr("penerima ditemukan · ketuk yang kodenya sama", "receivers found · tap the one with the same code")))
+        peerCard.addView(caption(tr("penerima di sekitar (Wi-Fi Direct) · ketuk yang kodenya sama",
+            "nearby receivers (Wi-Fi Direct) · tap the one with the same code")))
         peersEmpty = textLine(tr("mencari penerima...", "looking for receivers..."), 13f, color = p.muted)
         peersEmpty.setPadding(0, dp(6), 0, 0)
         peerCard.addView(peersEmpty)
@@ -1041,11 +1442,16 @@ class ShareFileActivity : FlasherBase() {
         sendNet.setPadding(0, dp(8), 0, 0)
         peerCard.addView(sendNet)
         sendBox.addView(peerCard)
+        sendGo = btn(tr("KIRIM 0 FILE", "SEND 0 FILES"), BtnStyle.PRIMARY) { sendSelected() }
+        sendGo.paint.isFakeBoldText = true
+        sendGo.layoutParams = lp(top = 10)
+        sendBox.addView(sendGo)
         sendPanel.addView(sendBox)
         sendWarn = warnBox("")
         sendWarn.visibility = View.GONE
         sendPanel.addView(sendWarn)
         content.addView(sendPanel)
+        renderFiles()
 
         // 4. Sedang mengirim atau menerima
         progPanel = panel()
