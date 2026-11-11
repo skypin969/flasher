@@ -36,7 +36,6 @@ class FlashSettingsActivity : FlasherBase() {
         }
         content.addView(backButton { finish() })
         content.addView(textLine(tr("PENGATURAN", "SETTINGS"), 22f, medium = true).apply {
-            paint.isFakeBoldText = true
             applyNeonText(this)
             setPadding(0, dp(8), 0, 0)
         })
