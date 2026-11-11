@@ -1339,12 +1339,6 @@ class ShareFileActivity : FlasherBase() {
         visibility = View.GONE
     }
 
-    /** Log setinggi 250 dp. Isi halaman dinaikkan ke atas supaya log bisa setinggi ini. */
-    private fun logPanel(): LinearLayout = makeLog().also { section ->
-        section.getChildAt(1).layoutParams =
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(250))
-    }
-
     private fun buildUi() {
         val p = pal()
         val content = LinearLayout(this).apply {
@@ -1354,12 +1348,12 @@ class ShareFileActivity : FlasherBase() {
 
         // Jarak atas dibuat kecil supaya isi halaman naik dan log bisa lebih tinggi
         val back = backButton { onBack() }
-        back.minimumHeight = dp(40)
+        back.minimumHeight = dp(32)
+        back.setPadding(dp(4), 0, dp(12), 0)
         back.layoutParams = lp(top = 0)
         content.addView(back)
         titleText = textLine("SHARE FILE", 22f, medium = true).apply {
             applyNeonText(this)
-            setPadding(0, dp(4), 0, 0)
         }
         content.addView(titleText)
         subText = caption("")
@@ -1512,6 +1506,6 @@ class ShareFileActivity : FlasherBase() {
         resultPanel.addView(resultBox)
         content.addView(resultPanel)
 
-        setContentView(page(ScrollView(this).apply { addView(content) }, logPanel()))
+        setContentView(logPage(ScrollView(this).apply { addView(content) }))
     }
 }
