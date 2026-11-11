@@ -39,6 +39,9 @@ const val REQ_PICK_TREE = 1002
 const val REQ_PICK_TGZ = 1003
 const val REQ_PICK_ZIP = 1004
 
+/** Tinggi log di halaman yang memakai [logPage]. Sama dengan log ADB SIDELOAD. */
+private const val LOG_HEIGHT_DP = 188
+
 /** Data bersama: hasil CEK FASTBOOT dan bahasa. */
 object Session {
     @Volatile var target: DeviceInfo? = null
@@ -811,6 +814,26 @@ abstract class FlasherBase : Activity() {
         row.addView(value)
         parent.addView(row)
         return value
+    }
+
+    /**
+     * Halaman dengan isi di atas dan log di bawah, sama seperti layar ADB SIDELOAD.
+     * Log setinggi [LOG_HEIGHT_DP] dp dan berjarak 16 dp dari kiri, kanan, dan bawah layar.
+     * Isi di atas bisa digulir jika lebih tinggi dari layar.
+     */
+    protected fun logPage(top: View): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = neonBackground()
+        addView(top, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        addView(
+            makeLog(fill = true),
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(LOG_HEIGHT_DP)).apply {
+                topMargin = dp(8)
+                marginStart = dp(16)
+                marginEnd = dp(16)
+                bottomMargin = dp(16)
+            }
+        )
     }
 
     /** Isi halaman di atas, log di bawah (bisa kosong). Latar memakai gradasi icon. */
