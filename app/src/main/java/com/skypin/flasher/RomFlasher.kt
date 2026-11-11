@@ -127,7 +127,7 @@ class DeviceInfo(
 fun readDevice(fb: Fastboot): DeviceInfo {
     val product = fb.getvar("product")?.trim().orEmpty()
     val serial = fb.getvar("serialno")?.trim().orEmpty()
-    val maxDl = parseHex(fb.getvar("max-download-size")) ?: (64L shl 20)
+    val maxDl = readMaxDownload { fb.cmd("getvar:max-download-size") }
     val anti = fb.getvar("anti")?.trim()?.toLongOrNull() ?: 0L
     val crc = fb.getvar("crc")?.trim() == "1"
     return DeviceInfo(product, serial, maxDl, anti, crc)
@@ -506,4 +506,70 @@ fun flashImage(
     } finally {
         src.close()
     }
+}
+
+
+private class PartInfo(val exists: Boolean, val size: Long)
+
+/** Membaca ukuran satu partisi dari HP. FAIL dari HP berarti partisi tidak ada. Gangguan USB tetap dilempar. */
+private fun partitionInfo(fb: Fastboot, part: String): PartInfo {
+    val r = try {
+        fb.cmd("getvar:partition-size:$part")
+    } catch (e: FastbootRejected) {
+        return PartInfo(false, -1L)
+    }
+    if (r.code != "OKAY" || r.text.isBlank()) return PartInfo(false, -1L)
+    val size = parseHex(r.text.trim()) ?: return PartInfo(true, -1L)
+    return PartInfo(true, size)
+}
+
+/**
+ * Memeriksa partisi tujuan di HP sebelum langkah pertama. Hanya membaca, tidak menulis apa pun.
+ * Langkah tulis yang partisinya tidak ada memblokir rencana. Langkah hapus yang partisinya tidak ada
+ * memblokir hanya jika diperiksa script; jika tidak, hanya dicatat. File yang lebih besar dari partisi juga memblokir.
+ */
+fun checkTargetPartitions(fb: Fastboot, src: RomSource, plan: RomPlan): RomPlan {
+    val errors = ArrayList<String>(plan.errors)
+    val notes = ArrayList<String>(plan.notes)
+    // Satu pembacaan per partisi. Tulis dan hapus tetap diperiksa sendiri-sendiri, sehingga urutan langkah tidak menyembunyikan blokir.
+    val cache = LinkedHashMap<String, PartInfo>()
+    val writeReported = HashSet<String>()
+    val eraseCheckedReported = HashSet<String>()
+    val eraseNoteReported = HashSet<String>()
+    val sizeReported = HashSet<String>()
+
+    for (s in plan.steps) {
+        if (s !is Step.Flash && s !is Step.Erase) continue
+        val part = if (s is Step.Flash) s.part else (s as Step.Erase).part
+        val info = cache.getOrPut(part) { partitionInfo(fb, part) }
+        if (!info.exists) {
+            if (s is Step.Flash) {
+                if (writeReported.add(part)) {
+                    errors.add("Partisi $part tidak ada di HP. Langkah tulis ini tidak boleh dilewati, jadi flash diblokir sebelum apa pun ditulis.")
+                }
+            } else if ((s as Step.Erase).checked) {
+                if (eraseCheckedReported.add(part)) {
+                    errors.add("Partisi $part tidak ada di HP, dan langkah hapus ini diperiksa script. Flash diblokir sebelum apa pun ditulis.")
+                }
+            } else {
+                if (eraseNoteReported.add(part)) {
+                    notes.add("Partisi $part tidak ada di HP. Langkah hapus ini tidak diperiksa script, jadi akan dilewati.")
+                }
+            }
+            continue
+        }
+        if (s is Step.Flash && info.size > 0L) {
+            val fsize = src.size(s.file)
+            if (fsize > info.size && sizeReported.add(s.file)) {
+                errors.add("File ${s.file} (${human(fsize)}) lebih besar dari partisi $part (${human(info.size)}). Flash diblokir sebelum apa pun ditulis.")
+            }
+        }
+    }
+
+    val total = cache.size
+    val found = cache.values.count { it.exists }
+    val absent = cache.filterValues { !it.exists }.keys
+    if (total > 0) notes.add("Pemeriksaan partisi: $found dari $total partisi tujuan ada di HP.")
+    if (absent.isNotEmpty()) notes.add("Tidak ada di HP: ${absent.joinToString(", ")}")
+    return RomPlan(plan.script, plan.rom, plan.steps, errors, plan.device, notes)
 }
