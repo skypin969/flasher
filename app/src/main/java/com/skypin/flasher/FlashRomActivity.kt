@@ -93,7 +93,7 @@ class FlashRomActivity : FlasherBase() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         textCol.addView(textLine(tr("Mode uji", "Test mode"), 15f, medium = true, color = p.text))
-        val state = textLine("", 12f, color = p.accent)
+        val state = textLine("", 12f, medium = true, color = p.accent)
         textCol.addView(state)
         row.addView(textCol)
         val toggle = NeonToggle(this).apply {
@@ -408,6 +408,7 @@ class FlashRomActivity : FlasherBase() {
             gravity = Gravity.CENTER
             setPadding(dp(12), dp(12), dp(12), dp(12))
             background = neonFrame(p.card, 10)
+            typeface = Fonts.medium
             setOnClickListener { action() }
             applyNeonText(this)
         }
@@ -441,7 +442,6 @@ class FlashRomActivity : FlasherBase() {
         gearBtn = gear
         // Tanda MODE UJI, warnanya sama dengan tulisan Kembali. Hanya tampil saat mode uji aktif.
         ujiLabel = textLine(tr("MODE UJI", "TEST MODE"), 12f, medium = true, color = p.accent).apply {
-            paint.isFakeBoldText = true
             setPadding(0, 0, dp(10), 0)
         }
         val topRow = LinearLayout(this).apply {
@@ -454,7 +454,6 @@ class FlashRomActivity : FlasherBase() {
         content.addView(topRow)
 
         content.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true).apply {
-            paint.isFakeBoldText = true
             applyNeonText(this)
             setPadding(0, dp(4), 0, 0)
         })
@@ -579,7 +578,6 @@ class FlashRomActivity : FlasherBase() {
         content.addView(warn)
 
         runBtn = btn(tr("JALANKAN", "RUN"), BtnStyle.PRIMARY) { onRunRom() }
-        runBtn.paint.isFakeBoldText = true
         setRunEnabled(false)
         content.addView(runBtn)
 
