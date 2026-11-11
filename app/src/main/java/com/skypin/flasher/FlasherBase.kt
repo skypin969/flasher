@@ -65,18 +65,27 @@ object Session {
     }
 }
 
-/** Font Space Grotesk dan JetBrains Mono dari assets/fonts. Jika file belum ada, pakai font bawaan HP. */
+/**
+ * Font Exo 2 (400, 500, 600, 700) dan JetBrains Mono dari assets/fonts. Jika file belum ada, pakai font bawaan HP.
+ * Ketebalan dipilih menurut peran tulisan, lihat [textLine], [caption], dan [btn].
+ */
 object Fonts {
-    lateinit var regular: Typeface
-    lateinit var medium: Typeface
-    lateinit var mono: Typeface
+    lateinit var regular: Typeface   // 400: keterangan dan isi
+    lateinit var medium: Typeface    // 500: tombol kedua
+    lateinit var semibold: Typeface  // 600: judul bagian, label kecil, tombol utama
+    lateinit var bold: Typeface      // 700: judul halaman dan angka besar
+    lateinit var mono: Typeface      // JetBrains Mono: log dan teks gaya terminal
     private var loaded = false
 
     @Synchronized
     fun load(ctx: Context) {
         if (loaded) return
-        regular = fromAsset(ctx, "fonts/space_grotesk_regular.ttf") ?: Typeface.SANS_SERIF
-        medium = fromAsset(ctx, "fonts/space_grotesk_medium.ttf")
+        regular = fromAsset(ctx, "fonts/exo2_regular.ttf") ?: Typeface.SANS_SERIF
+        medium = fromAsset(ctx, "fonts/exo2_medium.ttf")
+            ?: Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        semibold = fromAsset(ctx, "fonts/exo2_semibold.ttf")
+            ?: Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        bold = fromAsset(ctx, "fonts/exo2_bold.ttf")
             ?: Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         mono = fromAsset(ctx, "fonts/jetbrains_mono_regular.ttf") ?: Typeface.MONOSPACE
         loaded = true
@@ -650,11 +659,19 @@ abstract class FlasherBase : Activity() {
         text = s
         textSize = size
         setTextColor(color)
-        typeface = if (mono) Fonts.mono else if (medium) Fonts.medium else Fonts.regular
+        // Teks mono tetap JetBrains Mono. Ukuran 20 sp ke atas dianggap judul halaman (700).
+        typeface = when {
+            mono -> Fonts.mono
+            medium && size >= 20f -> Fonts.bold
+            medium -> Fonts.semibold
+            else -> Fonts.regular
+        }
     }
 
+    /** Label kecil di atas isian dan judul bagian kecil. Ketebalannya 600. */
     protected fun caption(s: String): TextView = textLine(s, 12f, color = pal().muted).apply {
         setPadding(0, dp(8), 0, dp(2))
+        typeface = Fonts.semibold
     }
 
     protected fun btn(label: String, style: BtnStyle = BtnStyle.PRIMARY, onClick: () -> Unit): Button {
@@ -675,7 +692,11 @@ abstract class FlasherBase : Activity() {
             text = label
             setAllCaps(false)
             textSize = 14f
-            typeface = if (style == BtnStyle.SECONDARY) Fonts.regular else Fonts.medium
+            typeface = when (style) {
+                BtnStyle.PRIMARY -> Fonts.semibold
+                BtnStyle.SECONDARY -> Fonts.medium
+                BtnStyle.DANGER -> Fonts.semibold
+            }
             setTextColor(fg)
             background = bgDrawable
             stateListAnimator = null
@@ -706,6 +727,7 @@ abstract class FlasherBase : Activity() {
 
     /** Tombol kecil berbentuk kapsul, untuk pilihan cepat nama partisi. */
     protected fun chip(label: String, onClick: () -> Unit): TextView = textLine(label, 13f).apply {
+        typeface = Fonts.medium
         gravity = Gravity.CENTER
         setPadding(dp(6), dp(8), dp(6), dp(8))
         background = rounded(pal().sub, 999, pal().border)
