@@ -197,12 +197,6 @@ class FlashImgActivity : FlasherBase() {
         }
     }
 
-    /** Log setinggi 300 dp. Isi halaman dinaikkan ke atas supaya log bisa setinggi ini. */
-    private fun logPanel(): LinearLayout = makeLog().also { section ->
-        section.getChildAt(1).layoutParams =
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(300))
-    }
-
     /** Tombol sekunder bergaris neon: isi gelap, garis pinggir dan tulisan bergradasi. */
     private fun neonOutline(label: String, radiusDp: Int, textSp: Float, padDp: Int, action: () -> Unit): TextView {
         val p = pal()
@@ -236,12 +230,12 @@ class FlashImgActivity : FlasherBase() {
 
         // Jarak atas dibuat kecil supaya isi halaman naik dan log bisa lebih tinggi
         backBtn = backButton { finish() }
-        backBtn.minimumHeight = dp(40)
+        backBtn.minimumHeight = dp(32)
+        backBtn.setPadding(dp(4), 0, dp(12), 0)
         backBtn.layoutParams = lp(top = 0)
         content.addView(backBtn)
         content.addView(textLine(tr("FLASH FILE IMG", "FLASH FILE IMG"), 22f, medium = true).apply {
             applyNeonText(this)
-            setPadding(0, dp(4), 0, 0)
         })
         val tgt = Session.target
         content.addView(
@@ -305,6 +299,6 @@ class FlashImgActivity : FlasherBase() {
         resultPanel.addView(btn(tr("REBOOT PERANGKAT", "REBOOT DEVICE"), BtnStyle.PRIMARY) { onReboot() })
         content.addView(resultPanel)
 
-        setContentView(page(ScrollView(this).apply { addView(content) }, logPanel()))
+        setContentView(logPage(ScrollView(this).apply { addView(content) }))
     }
 }
