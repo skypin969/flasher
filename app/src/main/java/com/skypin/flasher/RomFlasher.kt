@@ -267,9 +267,9 @@ fun buildPlan(src: RomSource, script: String, dev: DeviceInfo, rom: String): Rom
             notes.add("Pemotongan file cocok dengan daftar pemeriksa CRC paket (batas perangkat ${human(dev.maxDownload)}). Daftar dikirim, bootloader ikut memeriksa.")
         } else {
             finalSteps = steps.filterNot { it is Step.Flash && it.onlyIfCrc }
-            notes.add("Daftar pemeriksa CRC paket TIDAK dikirim ke perangkat, karena pemotongan file dengan batas perangkat ini (${human(dev.maxDownload)}) tidak cocok dengan daftar itu:")
+            notes.add("PERINGATAN: daftar pemeriksa CRC paket TIDAK dikirim ke perangkat, karena pemotongan file dengan batas perangkat ini (${human(dev.maxDownload)}) tidak cocok dengan daftar itu:")
             for (b in bad) notes.add("  $b")
-            notes.add("Flash tetap berjalan dengan batas perangkat. Isi file sudah diperiksa aplikasi sebelum flash.")
+            notes.add("Akibatnya bootloader tidak memeriksa setiap bagian saat flash. Flash tetap berjalan dengan batas perangkat. Isi file sudah diperiksa aplikasi sebelum flash, tetapi tidak diperiksa lagi saat dikirim.")
         }
     }
     return RomPlan(script, rom, finalSteps, errors, dev, notes)
