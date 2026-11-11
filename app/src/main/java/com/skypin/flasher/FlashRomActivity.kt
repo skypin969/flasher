@@ -139,6 +139,50 @@ class FlashRomActivity : FlasherBase() {
         popup.showAsDropDown(gearBtn, 0, dp(6), Gravity.END)
     }
 
+    /**
+     * Popup urutan aman: muncul saat tombol peringatan di bawah tombol pengaturan ditekan.
+     * Isinya tidak tampil di layar utama, supaya halaman tetap lega.
+     */
+    private fun showWarnPopup(anchor: View) {
+        val p = pal()
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(p.warnBg, 12, null)
+            setPadding(dp(11), dp(10), dp(11), dp(11))
+        }
+        body.addView(textLine(tr("urutan yang aman:", "safe order:"), 13f, medium = true, color = p.warnText))
+        body.addView(textLine(
+            tr("1. tunggu pemeriksaan file selesai, otomatis setelah pilih folder\n" +
+                "2. aktifkan MODE UJI lewat ikon pengaturan di kanan atas, lalu JALANKAN. Mode uji hanya membaca HP target dan menyusun rencana, tidak mengirim data\n" +
+                "3. baca CATATAN dan daftar langkah di log. Kalau ada yang diblokir, perbaiki dulu\n" +
+                "4. matikan MODE UJI, lalu JALANKAN lagi untuk flash sungguhan",
+                "1. wait for the file check to finish, it runs automatically after you choose the folder\n" +
+                    "2. turn on TEST MODE with the settings icon at the top right, then RUN. Test mode only reads the target phone and builds a plan, it sends no data\n" +
+                    "3. read CATATAN and the step list in the log. If something is blocked, fix it first\n" +
+                    "4. turn TEST MODE off, then RUN again for the real flash"),
+            11f,
+            color = p.warnText
+        ).apply { setPadding(0, dp(5), 0, 0) })
+        body.addView(textLine(
+            tr("jika CATATAN menulis daftar CRC tidak dikirim, flash tetap jalan dengan batas kiriman HP. Isi file sudah diperiksa sebelum flash, tetapi tidak diperiksa lagi saat dikirim.",
+                "if CATATAN says the CRC list is not sent, the flash still runs with the phone's send limit. The files were checked before the flash, but not checked again while they are sent."),
+            11f,
+            color = p.warnText
+        ).apply { setPadding(0, dp(7), 0, 0) })
+        body.addView(textLine(
+            tr("flash bisa menghapus data, jadi backup dulu. Selama flash, layar HP yang menjalankan aplikasi ini tidak boleh mati atau terkunci dan juga jangan menekan tombol apapun.",
+                "flashing can erase data, so back up first. During the flash, the screen of the phone running this app must not turn off or lock, and do not press any button."),
+            11f,
+            color = p.warnText
+        ).apply { setPadding(0, dp(7), 0, 0) })
+
+        val popup = PopupWindow(body, dp(280), LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        popup.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popup.isOutsideTouchable = true
+        popup.elevation = dp(8).toFloat()
+        popup.showAsDropDown(anchor, 0, dp(6), Gravity.END)
+    }
+
     override fun onDestroy() {
         closing = true
         super.onDestroy()
@@ -449,16 +493,36 @@ class FlashRomActivity : FlasherBase() {
         }
         content.addView(topRow)
 
-        content.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true).apply {
+        val tgt = Session.target
+        val titleBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        titleBlock.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true).apply {
             applyNeonText(this)
         })
-        val tgt = Session.target
-        content.addView(
+        titleBlock.addView(
             caption(
                 if (tgt != null) "${marketName(tgt.product)} · ${tgt.product}"
                 else tr("Target belum dicek", "Target not checked yet")
             )
         )
+        // Tombol peringatan di bawah tombol pengaturan, sejajar dengan judul. Ketuk untuk membuka popup urutan aman.
+        val warnBtn = FrameLayout(this).apply {
+            background = rounded(p.warnBg, 10, null)
+            isClickable = true
+            isFocusable = true
+            addView(WarnIcon(this@FlashRomActivity), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        }
+        warnBtn.setOnClickListener { showWarnPopup(warnBtn) }
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+            setPadding(0, dp(8), 0, 0)
+        }
+        titleRow.addView(titleBlock)
+        titleRow.addView(warnBtn, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginStart = dp(8) })
+        content.addView(titleRow)
 
         val form = box()
         val step1 = subCard()
@@ -547,31 +611,6 @@ class FlashRomActivity : FlasherBase() {
         form.layoutParams = lp(bottom = 0)
         content.addView(form)
 
-        val warn = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            background = rounded(p.warnBg, 10, null)
-            layoutParams = lp(top = 6)
-        }
-        warn.addView(textLine(tr("urutan yang aman:", "safe order:"), 12f, medium = true, color = p.warnText))
-        warn.addView(textLine(
-            tr("1. tunggu pemeriksaan file selesai\n" +
-                "2. JALANKAN dengan mode uji aktif, baca CATATAN di log\n" +
-                "3. matikan mode uji, lalu JALANKAN lagi",
-                "1. wait for the file check to finish\n" +
-                    "2. RUN with test mode on, read the CATATAN section in the log\n" +
-                    "3. turn test mode off, then RUN again"),
-            12f,
-            color = p.warnText
-        ))
-        warn.addView(textLine(
-            tr("saat flashing berjalan, layar tidak boleh mati atau terkunci.",
-                "while flashing is running, the screen must not turn off or lock."),
-            12f,
-            color = p.warnText
-        ).apply { setPadding(0, dp(4), 0, 0) })
-        content.addView(warn)
-
         runBtn = btn(tr("JALANKAN", "RUN"), BtnStyle.PRIMARY) { onRunRom() }
         setRunEnabled(false)
         content.addView(runBtn)
@@ -604,6 +643,38 @@ class SlidersIcon(context: Context) : View(context) {
             canvas.drawCircle(kx * s, y * s, 2.5f * s, knobPaint)
             canvas.drawCircle(kx * s, y * s, 2.5f * s, linePaint)
         }
+    }
+}
+
+/** Ikon segitiga peringatan yang digambar sendiri. Dipakai sebagai tombol peringatan. */
+class WarnIcon(context: Context) : View(context) {
+
+    private val density = context.resources.displayMetrics.density
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        strokeWidth = 2f * density
+    }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        // Koordinat dibuat untuk kotak 24 x 24, lalu diskalakan ke ukuran view
+        val s = width / 24f
+        val color = pal().warnText
+        linePaint.color = color
+        dotPaint.color = color
+        val triangle = Path().apply {
+            moveTo(12f * s, 3f * s)
+            lineTo(22f * s, 20f * s)
+            lineTo(2f * s, 20f * s)
+            close()
+        }
+        canvas.drawPath(triangle, linePaint)
+        canvas.drawLine(12f * s, 9f * s, 12f * s, 13.5f * s, linePaint)
+        canvas.drawCircle(12f * s, 16.8f * s, 1.3f * s, dotPaint)
     }
 }
 
