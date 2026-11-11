@@ -110,7 +110,7 @@ class AdbSideloadActivity : FlasherBase() {
         statusTop.addView(textLine(tr("zip terkirim", "zip sent"), 15f, medium = true).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        statusTop.addView(textLine(tr("Selesai", "Done"), 11f, color = p.okText).apply {
+        statusTop.addView(textLine(tr("Selesai", "Done"), 11f, medium = true, color = p.okText).apply {
             setPadding(dp(8), dp(2), dp(8), dp(2))
             background = rounded(p.ok, 999, null)
         })
@@ -151,7 +151,6 @@ class AdbSideloadActivity : FlasherBase() {
         sendRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         sendRow.addView(neonOutlineBtn(tr("CEK ADB SIDELOAD", "CHECK ADB SIDELOAD")) { onCheck() })
         val sendBtn = btn(tr("KIRIM", "SEND"), BtnStyle.PRIMARY) { onSend() }
-        sendBtn.paint.isFakeBoldText = true
         sendRow.addView(sendBtn)
         root.addView(sendRow)
 
@@ -172,7 +171,6 @@ class AdbSideloadActivity : FlasherBase() {
 
     /** Judul tebal dengan gradasi ungu ke cyan, seperti di tampilan Flashmate. Gradasi mengikuti lebar tulisan. */
     private fun gradientTitle(s: String, size: Float): TextView = textLine(s, size, medium = true).apply {
-        paint.isFakeBoldText = true
         addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
             val tv = v as TextView
             val w = tv.paint.measureText(tv.text.toString())
