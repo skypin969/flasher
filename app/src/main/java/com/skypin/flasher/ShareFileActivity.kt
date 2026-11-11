@@ -1239,6 +1239,9 @@ class ShareFileActivity : FlasherBase() {
 
     // ---------- Tampilan ----------
 
+    /** Tombol KIRIM FILE dan TERIMA FILE di halaman utama. Gaya dan ketebalannya sama dengan tombol utama lain. */
+    private fun homeButton(label: String, onClick: () -> Unit): Button = btn(label, BtnStyle.PRIMARY, onClick)
+
     private fun show(panel: View) {
         for (v in listOf(homePanel, recvPanel, sendPanel, progPanel, resultPanel)) {
             v.visibility = if (v === panel) View.VISIBLE else View.GONE
@@ -1355,7 +1358,6 @@ class ShareFileActivity : FlasherBase() {
         back.layoutParams = lp(top = 0)
         content.addView(back)
         titleText = textLine("SHARE FILE", 22f, medium = true).apply {
-            paint.isFakeBoldText = true
             applyNeonText(this)
             setPadding(0, dp(4), 0, 0)
         }
@@ -1367,11 +1369,9 @@ class ShareFileActivity : FlasherBase() {
         homePanel = panel()
         val homeBox = box()
         homeBox.addView(caption(tr("pilih peran hp ini", "choose this phone's role")))
-        val bSend = btn(tr("KIRIM FILE", "SEND FILE"), BtnStyle.PRIMARY) { startSend() }
-        bSend.paint.isFakeBoldText = true
-        homeBox.addView(bSend)
+        homeBox.addView(homeButton(tr("KIRIM FILE", "SEND FILE")) { startSend() })
         homeBox.addView(caption(tr("hp ini mengirim file ke hp lain", "this phone sends a file to another phone")))
-        homeBox.addView(neonOutlineBtn(tr("TERIMA FILE", "RECEIVE FILE")) { startReceive() })
+        homeBox.addView(homeButton(tr("TERIMA FILE", "RECEIVE FILE")) { startReceive() })
         homeBox.addView(caption(tr("hp ini menunggu kiriman dari hp lain", "this phone waits for a file from another phone")))
         homePanel.addView(homeBox)
         homePanel.addView(warnBox(wifiNote()))
@@ -1383,10 +1383,9 @@ class ShareFileActivity : FlasherBase() {
         val codeCard = subCard()
         codeCard.layoutParams = lp(top = 0)
         codeCard.addView(caption(tr("tunjukkan kode ini ke pengirim", "show this code to the sender")))
-        codeText = textLine("0000", 40f, medium = true, mono = true).apply {
+        codeText = textLine("0000", 40f, medium = true).apply {
             gravity = Gravity.CENTER
             letterSpacing = 0.3f
-            paint.isFakeBoldText = true
             applyNeonText(this)
         }
         codeCard.addView(codeText)
@@ -1443,7 +1442,6 @@ class ShareFileActivity : FlasherBase() {
         peerCard.addView(sendNet)
         sendBox.addView(peerCard)
         sendGo = btn(tr("KIRIM 0 FILE", "SEND 0 FILES"), BtnStyle.PRIMARY) { sendSelected() }
-        sendGo.paint.isFakeBoldText = true
         sendGo.layoutParams = lp(top = 10)
         sendBox.addView(sendGo)
         sendPanel.addView(sendBox)
@@ -1466,7 +1464,6 @@ class ShareFileActivity : FlasherBase() {
             setPadding(0, dp(8), 0, 0)
         }
         progPercent = textLine("100%", 32f, medium = true).apply {
-            paint.isFakeBoldText = true
             applyNeonText(this)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
