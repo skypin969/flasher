@@ -221,6 +221,7 @@ class FlashImgActivity : FlasherBase() {
             gravity = Gravity.CENTER
             setPadding(dp(padDp), dp(10), dp(padDp), dp(10))
             background = layers
+            typeface = Fonts.medium
             setOnClickListener { action() }
             applyNeonText(this)
         }
@@ -239,7 +240,6 @@ class FlashImgActivity : FlasherBase() {
         backBtn.layoutParams = lp(top = 0)
         content.addView(backBtn)
         content.addView(textLine(tr("FLASH FILE IMG", "FLASH FILE IMG"), 22f, medium = true).apply {
-            paint.isFakeBoldText = true
             applyNeonText(this)
             setPadding(0, dp(4), 0, 0)
         })
@@ -292,7 +292,6 @@ class FlashImgActivity : FlasherBase() {
         formPanel.addView(imgInfo)
 
         val bFlash = btn(tr("FLASH FILE", "FLASH FILE"), BtnStyle.PRIMARY) { onFlash() }
-        bFlash.paint.isFakeBoldText = true
         formPanel.addView(bFlash)
         content.addView(formPanel)
 
