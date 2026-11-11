@@ -185,8 +185,7 @@ class MainActivity : FlasherBase() {
         val title = textLine("√- Flashmate", 22f, medium = true, color = p.text).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        // Judul ditebalkan seperti judul halaman lain
-        title.paint.isFakeBoldText = true
+        // Judul halaman: ketebalan 700 dari Exo 2 Bold
         applyNeonText(title)
         header.addView(title)
         header.addView(langSwitch())
@@ -200,7 +199,7 @@ class MainActivity : FlasherBase() {
         cardTop.addView(textLine(tr("Perangkat", "Device"), 12f, color = p.muted).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        statusBadge = textLine("", 11f).apply { setPadding(dp(8), dp(2), dp(8), dp(2)) }
+        statusBadge = textLine("", 11f, medium = true).apply { setPadding(dp(8), dp(2), dp(8), dp(2)) }
         cardTop.addView(statusBadge)
         card.addView(cardTop)
 
