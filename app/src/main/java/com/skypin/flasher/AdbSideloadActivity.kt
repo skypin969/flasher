@@ -33,6 +33,7 @@ class AdbSideloadActivity : FlasherBase() {
     private lateinit var deviceLine: TextView
     private lateinit var guideTitle: TextView
     private lateinit var guideCard: LinearLayout
+    private lateinit var guideSteps: LinearLayout
     private lateinit var statusCard: LinearLayout
     private lateinit var statusNote: TextView
     private lateinit var fileLabel: TextView
@@ -85,18 +86,12 @@ class AdbSideloadActivity : FlasherBase() {
         }
         root.addView(deviceLine)
 
-        // Petunjuk, tampil sebelum kirim
+        // Petunjuk, tampil sebelum kirim. Isinya ikut zip yang dipilih (lihat guideLines)
         guideCard = neonCard()
         guideTitle = textLine("", 12f, color = p.muted)
         guideCard.addView(guideTitle)
-        guideCard.addView(stepLine(tr("1. masuk recovery dengan volume atas + power",
-            "1. enter recovery with volume up + power")))
-        guideCard.addView(stepLine(tr("2. pilih Apply update → Apply from ADB",
-            "2. choose Apply update → Apply from ADB")))
-        guideCard.addView(stepLine(tr("3. pasang kabel, ketuk notifikasi \"Mengisi daya perangkat ini\", lalu pilih Pengisian daya terbalik",
-            "3. connect the cable, tap the \"Charging this device\" notification, then choose Reverse charging")))
-        guideCard.addView(stepLine(tr("4. kembali ke sini, tekan CEK ADB SIDELOAD, lalu KIRIM",
-            "4. come back here, press CHECK ADB SIDELOAD, then SEND")))
+        guideSteps = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        guideCard.addView(guideSteps)
         // Jarak kartu petunjuk ke judul "file zip" dibuat lebih rapat, supaya blok zip naik sedikit
         guideCard.layoutParams = lp(bottom = 4)
         root.addView(guideCard)
@@ -162,6 +157,41 @@ class AdbSideloadActivity : FlasherBase() {
         setPadding(0, dp(4), 0, 0)
     }
 
+    /**
+     * Langkah sebelum kirim. Zip ROM pertama: masuk recovery, factory reset, lalu pasang.
+     * Zip MindTheGapps (putaran kedua): Apply from ADB lagi di HP target, lalu pilih Yes saat diminta.
+     */
+    private fun guideLines(): List<String> =
+        if (isMindTheGapps(zipName)) {
+            listOf(
+                tr("1. di HP target (recovery), pilih Apply update → Apply from ADB",
+                    "1. on the target (recovery), choose Apply update → Apply from ADB"),
+                tr("2. di sini, tekan CEK ADB SIDELOAD (setujui popup izin USB jika muncul), lalu KIRIM",
+                    "2. here, press CHECK ADB SIDELOAD (approve the USB popup if it appears), then SEND"),
+                tr("3. saat di HP target muncul \"Install anyway?\", pilih Yes",
+                    "3. when the target shows \"Install anyway?\", choose Yes")
+            )
+        } else {
+            listOf(
+                tr("1. masuk recovery dengan volume atas + power",
+                    "1. enter recovery with volume up + power"),
+                tr("2. pilih Factory reset, lalu konfirmasi (hanya untuk pemasangan ROM pertama)",
+                    "2. choose Factory reset, then confirm (only for the first ROM install)"),
+                tr("3. pilih Apply update → Apply from ADB",
+                    "3. choose Apply update → Apply from ADB"),
+                tr("4. pasang kabel, ketuk notifikasi \"Mengisi daya perangkat ini\", lalu pilih Pengisian daya terbalik",
+                    "4. connect the cable, tap the \"Charging this device\" notification, then choose Reverse charging"),
+                tr("5. kembali ke sini, tekan CEK ADB SIDELOAD (setujui popup izin USB jika muncul), lalu KIRIM",
+                    "5. come back here, press CHECK ADB SIDELOAD (approve the USB popup if it appears), then SEND")
+            )
+        }
+
+    /** Mengisi ulang petunjuk sebelum kirim sesuai zip yang dipilih. */
+    private fun renderGuide() {
+        guideSteps.removeAllViews()
+        for (s in guideLines()) guideSteps.addView(stepLine(s))
+    }
+
     /** Judul tebal dengan gradasi ungu ke cyan, seperti di tampilan Flashmate. Gradasi mengikuti lebar tulisan. */
     private fun gradientTitle(s: String, size: Float): TextView = textLine(s, size, medium = true).apply {
         addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
@@ -183,6 +213,7 @@ class AdbSideloadActivity : FlasherBase() {
     private fun applyState() {
         val p = pal()
         val done = sent
+        renderGuide()
         guideCard.visibility = if (done) View.GONE else View.VISIBLE
         statusCard.visibility = if (done) View.VISIBLE else View.GONE
         pickTop.visibility = if (done) View.GONE else View.VISIBLE
@@ -288,16 +319,13 @@ class AdbSideloadActivity : FlasherBase() {
                             // Tanpa persen. Setelah blok terakhir terkirim, tampilkan tahap menunggu Poco
                             if (sentBytes >= size && !waitShown) {
                                 waitShown = true
-                                logStatus(tr("menunggu $label memproses file...", "waiting for $label to process the file..."))
+                                logStatus(waitTextFor(name, label))
                             }
                         }
                     }
 
-                    // Perangkat sudah memberi tanda selesai. Pemasangan berhasil atau tidak hanya terlihat di layar perangkat
-                    logStatus(
-                        tr("Proses sedang berjalan, lihat di layar $label, tunggu sampai ada tulisan \"Install completed with status 0\"",
-                            "Running. Check the $label screen and wait for the text \"Install completed with status 0\"")
-                    )
+                    // Zip sudah selesai dikirim. Hasil pemasangan hanya terlihat di layar perangkat, jadi log memberi tahu langkah berikutnya
+                    logStatus(finishTextFor(name, label))
                 }
             } finally {
                 clearStatus()
@@ -317,7 +345,7 @@ class AdbSideloadActivity : FlasherBase() {
     private fun noteFor(file: String): String {
         val f = file.lowercase(Locale.ROOT)
         return when {
-            f.contains("mindthegapps") -> tr(
+            isMindTheGapps(file) -> tr(
                 "Pilih Reboot system now.",
                 "Choose Reboot system now."
             )
@@ -326,11 +354,46 @@ class AdbSideloadActivity : FlasherBase() {
                 "If asked to install additional packages, choose No.\nThen choose Reboot system now."
             )
             else -> tr(
-                "Jika ditanya install paket tambahan, pilih No.\nUntuk Google apps, pilih Advanced → Reboot to recovery, lalu kirim MindTheGapps.\nTanpa Google apps, pilih Reboot system now.",
-                "If asked to install additional packages, choose No.\nFor Google apps, choose Advanced → Reboot to recovery, then send MindTheGapps.\nWithout Google apps, choose Reboot system now."
+                "Jika ditanya install paket tambahan, pilih No.\nUntuk Google apps: pilih Advanced → Reboot to recovery. Di HP target pilih Apply update → Apply from ADB, lalu di sini pilih PILIH ZIP BERIKUTNYA dan MindTheGapps.\nTanpa Google apps, pilih Reboot system now.",
+                "If asked to install additional packages, choose No.\nFor Google apps: choose Advanced → Reboot to recovery. On the target choose Apply update → Apply from ADB, then here pick NEXT ZIP and MindTheGapps.\nWithout Google apps, choose Reboot system now."
             )
         }
     }
+
+    /** MindTheGapps: GApps terpisah. Di layar perangkat muncul "Install anyway?" dan pilihannya harus Yes. */
+    private fun isMindTheGapps(file: String): Boolean =
+        file.lowercase(Locale.ROOT).contains("mindthegapps")
+
+    /**
+     * Teks log saat zip sudah terkirim dan perangkat sedang memasang (belum ada tanda selesai).
+     * Log menjelaskan pilihan di layar perangkat, sesuai jenis zip.
+     */
+    private fun waitTextFor(file: String, label: String): String =
+        if (isMindTheGapps(file)) {
+            tr(
+                "menunggu $label memproses file... Jika di layar $label muncul \"Install anyway?\", pilih Yes.",
+                "waiting for $label to process the file... If $label shows \"Install anyway?\", choose Yes."
+            )
+        } else {
+            tr(
+                "menunggu $label memproses file... Jika di layar $label muncul pilihan Yes atau No, pilih No.",
+                "waiting for $label to process the file... If $label shows a Yes or No choice, choose No."
+            )
+        }
+
+    /** Teks log setelah zip selesai dikirim. Hanya menyebut langkah berikutnya, tidak menunggu tulisan di layar. */
+    private fun finishTextFor(file: String, label: String): String =
+        if (isMindTheGapps(file)) {
+            tr(
+                "MindTheGapps sudah terkirim. Pastikan di layar $label ada tulisan \"Install completed with status 0\", lalu pilih Reboot system now.",
+                "MindTheGapps has been sent. Make sure the $label screen shows \"Install completed with status 0\", then choose Reboot system now."
+            )
+        } else {
+            tr(
+                "Zip sudah terkirim. Pastikan di layar $label ada tulisan \"Install completed with status 0\", lalu ikuti petunjuk di kartu di atas.",
+                "Zip has been sent. Make sure the $label screen shows \"Install completed with status 0\", then follow the steps on the card above."
+            )
+        }
 
     /** Membaca [len] byte dari posisi [offset] file. Mengembalikan jumlah byte yang terbaca. */
     private fun readAt(ch: FileChannel, offset: Long, dst: ByteArray, len: Int): Int {
