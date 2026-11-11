@@ -1334,9 +1334,11 @@ class ShareFileActivity : FlasherBase() {
             "on Android 12 and older, location (GPS) must be on too.")
     }
 
+    /** Panel satu per tahap. Jaraknya dari tulisan di atas 10 dp, sama seperti FLASH FILE IMG dan FLASH FASTBOOT ROM. */
     private fun panel(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         visibility = View.GONE
+        layoutParams = lp(top = 10)
     }
 
     private fun buildUi() {
