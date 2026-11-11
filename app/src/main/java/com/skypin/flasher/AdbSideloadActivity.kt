@@ -10,6 +10,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -69,12 +70,11 @@ class AdbSideloadActivity : FlasherBase() {
         }
 
         val back = backButton { onBack() }
-        back.minimumHeight = dp(40)
+        back.minimumHeight = dp(32)
+        back.setPadding(dp(4), 0, dp(12), 0)
         back.layoutParams = lp(top = 0)
         root.addView(back)
-        root.addView(gradientTitle("ADB SIDELOAD", 22f).apply {
-            setPadding(0, dp(4), 0, 0)
-        })
+        root.addView(gradientTitle("ADB SIDELOAD", 22f))
         root.addView(textLine(
             tr("kirim file .zip dari recovery lewat adb", "send a .zip file from recovery over adb"),
             13f,
@@ -149,20 +149,13 @@ class AdbSideloadActivity : FlasherBase() {
 
         // CEK dan KIRIM, sebelum kirim
         sendRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        sendRow.addView(neonOutlineBtn(tr("CEK ADB SIDELOAD", "CHECK ADB SIDELOAD")) { onCheck() })
+        sendRow.addView(btn(tr("CEK ADB SIDELOAD", "CHECK ADB SIDELOAD"), BtnStyle.PRIMARY) { onCheck() })
         val sendBtn = btn(tr("KIRIM", "SEND"), BtnStyle.PRIMARY) { onSend() }
         sendRow.addView(sendBtn)
         root.addView(sendRow)
 
-        // Log mengisi sisa tinggi layar
-        root.addView(
-            makeLog(fill = true),
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-                topMargin = dp(8)
-            }
-        )
-
-        setContentView(root)
+        // Log di bawah layar, sama dengan layar lain
+        setContentView(logPage(ScrollView(this).apply { addView(root) }))
     }
 
     private fun stepLine(s: String): TextView = textLine(s, 14f).apply {
