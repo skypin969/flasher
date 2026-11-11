@@ -12,7 +12,10 @@ const val ERASE_TIMEOUT = 120000
 const val FLASH_TIMEOUT = 600000
 const val CHUNK = 16384
 
-class FastbootException(msg: String) : RuntimeException(msg)
+open class FastbootException(msg: String) : RuntimeException(msg)
+
+/** Penolakan dari HP (FAIL). Turunan FastbootException, jadi kode yang menangkap FastbootException tetap bekerja. */
+class FastbootRejected(msg: String) : FastbootException(msg)
 
 class FbResp(val code: String, val text: String, val dataSize: Long)
 
@@ -61,7 +64,7 @@ class Fastboot(private val conn: UsbDeviceConnection, private val iface: UsbInte
             when {
                 s.startsWith("INFO") -> continue
                 s.startsWith("OKAY") -> return FbResp("OKAY", s.substring(4), 0L)
-                s.startsWith("FAIL") -> throw FastbootException(s.substring(4).ifBlank { "FAIL" })
+                s.startsWith("FAIL") -> throw FastbootRejected(s.substring(4).ifBlank { "FAIL" })
                 s.startsWith("DATA") -> {
                     val sz = s.substring(4, minOf(12, s.length)).toLongOrNull(16)
                         ?: throw FastbootException("Respon DATA tidak valid")
@@ -143,6 +146,45 @@ class Fastboot(private val conn: UsbDeviceConnection, private val iface: UsbInte
 }
 
 fun parseHex(s: String?): Long? = s?.trim()?.removePrefix("0x")?.toLongOrNull(16)
+
+private val MAX_DL_HEX = Regex("0[xX][0-9a-fA-F]{1,16}")
+
+/** Mengubah jawaban max-download-size menjadi byte. Hanya format hex 0x... yang diterima, selain itu null. */
+fun parseMaxDownloadHex(raw: String?): Long? {
+    val s = raw?.trim() ?: return null
+    if (!MAX_DL_HEX.matches(s)) return null
+    val v = s.substring(2).toLongOrNull(16) ?: return null
+    return if (v > 0) v else null
+}
+
+/**
+ * Membaca batas kiriman bootloader (max-download-size). Tidak ada nilai cadangan: jika tidak terbaca,
+ * flash dihentikan dengan pesan, karena tebakan bisa membuat pemotongan file tidak sesuai tanpa diketahui.
+ * [query] menjalankan getvar; dipisah agar bisa diuji dengan jawaban bootloader palsu.
+ */
+fun readMaxDownload(query: () -> FbResp): Long {
+    val raw: String = try {
+        val r = query()
+        if (r.code == "OKAY") r.text else ""
+    } catch (e: FastbootRejected) {
+        throw FastbootException(
+            "Bootloader menolak max-download-size (${e.message}). Flash dibatalkan karena batas kiriman tidak diketahui. " +
+                "Untuk HP ini, coba cara manual lewat fastboot di Termux."
+        )
+    } catch (e: FastbootException) {
+        throw FastbootException(
+            "Perangkat tidak memberi jawaban untuk max-download-size (${e.message}). Bisa juga karena USB terputus: " +
+                "hubungkan ulang lalu coba lagi. Flash dibatalkan."
+        )
+    }
+    return parseMaxDownloadHex(raw)
+        ?: throw FastbootException(
+            "max-download-size tidak bisa dibaca sebagai 0x... (jawaban: " +
+                (if (raw.isBlank()) "kosong" else "\"${raw.trim()}\"") +
+                "). Flash dibatalkan karena batas kiriman tidak diketahui. " +
+                "Untuk HP ini, coba cara manual lewat fastboot di Termux."
+        )
+}
 
 fun human(b: Long): String = when {
     b >= (1L shl 30) -> "%.2f GB".format(b / 1073741824.0)
