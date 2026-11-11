@@ -66,9 +66,9 @@ class FlashRomActivity : FlasherBase() {
         refreshUjiLabel()
     }
 
-    /** Tulisan MODE UJI di samping tombol pojok kanan atas hanya tampil saat mode uji aktif. */
+    /** Tulisan MODE UJI di samping tombol pojok kanan atas selalu tampil. Status on/off ada di popup pengaturan. */
     private fun refreshUjiLabel() {
-        ujiLabel.visibility = if (FlashSettings.dryRun(this)) View.VISIBLE else View.INVISIBLE
+        ujiLabel.visibility = View.VISIBLE
     }
 
     /**
@@ -414,12 +414,6 @@ class FlashRomActivity : FlasherBase() {
         }
     }
 
-    /** Log setinggi 205 dp, lebih pendek dari halaman lain supaya tombol JALANKAN di atasnya tetap terlihat. */
-    private fun logPanel(): LinearLayout = makeLog().also { section ->
-        section.getChildAt(1).layoutParams =
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(205))
-    }
-
     private fun buildUi() {
         val p = pal()
         val content = LinearLayout(this).apply {
@@ -430,7 +424,8 @@ class FlashRomActivity : FlasherBase() {
         // Baris atas: Kembali di kiri, tanda MODE UJI dan tombol mode uji (ikon sliders) di kanan.
         // Jarak atas dibuat kecil supaya isi halaman naik dan log bisa lebih tinggi.
         val back = backButton { finish() }
-        back.minimumHeight = dp(40)
+        back.minimumHeight = dp(32)
+        back.setPadding(dp(4), 0, dp(12), 0)
         back.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         val gear = FrameLayout(this).apply {
             background = rounded(p.card, 10, p.border)
@@ -441,7 +436,8 @@ class FlashRomActivity : FlasherBase() {
         }
         gearBtn = gear
         // Tanda MODE UJI, warnanya sama dengan tulisan Kembali. Hanya tampil saat mode uji aktif.
-        ujiLabel = textLine(tr("MODE UJI", "TEST MODE"), 12f, medium = true, color = p.accent).apply {
+        ujiLabel = textLine(tr("MODE UJI", "TEST MODE"), 15f, medium = true).apply {
+            applyNeonText(this)
             setPadding(0, 0, dp(10), 0)
         }
         val topRow = LinearLayout(this).apply {
@@ -455,7 +451,6 @@ class FlashRomActivity : FlasherBase() {
 
         content.addView(textLine(tr("FLASH FASTBOOT ROM", "FLASH FASTBOOT ROM"), 22f, medium = true).apply {
             applyNeonText(this)
-            setPadding(0, dp(4), 0, 0)
         })
         val tgt = Session.target
         content.addView(
@@ -581,7 +576,7 @@ class FlashRomActivity : FlasherBase() {
         setRunEnabled(false)
         content.addView(runBtn)
 
-        setContentView(page(ScrollView(this).apply { addView(content) }, logPanel()))
+        setContentView(logPage(ScrollView(this).apply { addView(content) }))
     }
 }
 
