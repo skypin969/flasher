@@ -153,7 +153,7 @@ class AdbSideloadActivity : FlasherBase() {
         setContentView(logPage(ScrollView(this).apply { addView(root) }))
     }
 
-    private fun stepLine(s: String): TextView = textLine(s, 14f).apply {
+    private fun stepLine(s: String): TextView = textLine(s, 10f).apply {
         setPadding(0, dp(4), 0, 0)
     }
 
