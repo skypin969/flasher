@@ -158,7 +158,7 @@ class AdbSideloadActivity : FlasherBase() {
     }
 
     /**
-     * Langkah sebelum kirim. Zip ROM pertama: masuk recovery, factory reset, lalu pasang.
+     * Langkah sebelum kirim. Zip ROM pertama: factory reset di recovery, pasang kabel dengan pengisian daya terbalik, lalu Apply from ADB.
      * Zip MindTheGapps (putaran kedua): Apply from ADB lagi di HP target, lalu pilih Yes saat diminta.
      */
     private fun guideLines(): List<String> =
@@ -173,16 +173,14 @@ class AdbSideloadActivity : FlasherBase() {
             )
         } else {
             listOf(
-                tr("1. masuk recovery dengan volume atas + power",
-                    "1. enter recovery with volume up + power"),
-                tr("2. pilih Factory reset, lalu konfirmasi (hanya untuk pemasangan ROM pertama)",
-                    "2. choose Factory reset, then confirm (only for the first ROM install)"),
-                tr("3. pilih Apply update → Apply from ADB",
-                    "3. choose Apply update → Apply from ADB"),
-                tr("4. pasang kabel, ketuk notifikasi \"Mengisi daya perangkat ini\", lalu pilih Pengisian daya terbalik",
-                    "4. connect the cable, tap the \"Charging this device\" notification, then choose Reverse charging"),
-                tr("5. kembali ke sini, tekan CEK ADB SIDELOAD (setujui popup izin USB jika muncul), lalu KIRIM",
-                    "5. come back here, press CHECK ADB SIDELOAD (approve the USB popup if it appears), then SEND")
+                tr("1. Di recovery pilih: Factory reset, lalu konfirmasi (hanya untuk pemasangan rom pertama)",
+                    "1. In recovery choose: Factory reset, then confirm (only for the first rom install)"),
+                tr("2. Selanjutnya pasang kabel, ketuk notifikasi \"Mengisi daya perangkat ini\", lalu pilih: \"pengisian daya terbalik\".",
+                    "2. Next connect the cable, tap the \"Charging this device\" notification, then choose: \"reverse charging\"."),
+                tr("3. Lalu pilih: Apply update → Apply from ADB",
+                    "3. Then choose: Apply update → Apply from ADB"),
+                tr("4. kembali ke sini, tekan CEK ADB SIDELOAD (setujui popup izin USB jika muncul), lalu KIRIM, lihat log di bawah.",
+                    "4. come back here, press CHECK ADB SIDELOAD (approve the USB popup if it appears), then SEND, and check the log below.")
             )
         }
 
