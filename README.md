@@ -25,13 +25,15 @@ Aplikasi Android untuk flash HP Xiaomi lewat kabel OTG. Satu HP dipakai sebagai 
 
 *Ilustrasi (rancangan), bukan tangkapan layar asli.*
 
-![Beranda](docs/01_home_screen.png)
+<p align="center">
+  <img src="docs/01_home_screen.png" alt="Beranda" width="175">
+  <img src="docs/02_flash_file_img.png" alt="FLASH FILE IMG" width="175">
+</p>
 
-![FLASH FILE IMG](docs/02_flash_file_img.png)
-
-![FLASH FASTBOOT ROM](docs/03_flash_fastboot_rom.png)
-
-![SHARE FILE](docs/07_share_file_home.png)
+<p align="center">
+  <img src="docs/03_flash_fastboot_rom.png" alt="FLASH FASTBOOT ROM" width="175">
+  <img src="docs/07_share_file_home.png" alt="SHARE FILE" width="175">
+</p>
 
 ## Perangkat yang sudah diuji
 
@@ -98,13 +100,15 @@ Android app for flashing Xiaomi phones over an OTG cable. One phone runs Flashma
 
 *Illustrations (design mockups), not real screenshots.*
 
-![Home](docs/01_home_screen.png)
+<p align="center">
+  <img src="docs/01_home_screen.png" alt="Home" width="175">
+  <img src="docs/02_flash_file_img.png" alt="FLASH FILE IMG" width="175">
+</p>
 
-![FLASH FILE IMG](docs/02_flash_file_img.png)
-
-![FLASH FASTBOOT ROM](docs/03_flash_fastboot_rom.png)
-
-![SHARE FILE](docs/07_share_file_home.png)
+<p align="center">
+  <img src="docs/03_flash_fastboot_rom.png" alt="FLASH FASTBOOT ROM" width="175">
+  <img src="docs/07_share_file_home.png" alt="SHARE FILE" width="175">
+</p>
 
 ## Tested devices
 
