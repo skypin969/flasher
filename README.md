@@ -32,6 +32,10 @@ Aplikasi Android untuk flash HP Xiaomi lewat kabel OTG. Satu HP dipakai sebagai 
 
 <p align="center">
   <img src="docs/03_flash_fastboot_rom.png" alt="FLASH FASTBOOT ROM" width="175">
+  <img src="docs/06_adb_sideload.png" alt="ADB SIDELOAD" width="175">
+</p>
+
+<p align="center">
   <img src="docs/07_share_file_home.png" alt="SHARE FILE" width="175">
 </p>
 
@@ -107,6 +111,10 @@ Android app for flashing Xiaomi phones over an OTG cable. One phone runs Flashma
 
 <p align="center">
   <img src="docs/03_flash_fastboot_rom.png" alt="FLASH FASTBOOT ROM" width="175">
+  <img src="docs/06_adb_sideload.png" alt="ADB SIDELOAD" width="175">
+</p>
+
+<p align="center">
   <img src="docs/07_share_file_home.png" alt="SHARE FILE" width="175">
 </p>
 
