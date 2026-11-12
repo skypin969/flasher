@@ -179,8 +179,8 @@ class AdbSideloadActivity : FlasherBase() {
                     "2. Next connect the cable, tap the \"Charging this device\" notification, then choose: \"reverse charging\"."),
                 tr("3. Lalu pilih: Apply update → Apply from ADB",
                     "3. Then choose: Apply update → Apply from ADB"),
-                tr("4. kembali ke sini, tekan CEK ADB SIDELOAD (setujui popup izin USB jika muncul), lalu KIRIM, lihat log di bawah.",
-                    "4. come back here, press CHECK ADB SIDELOAD (approve the USB popup if it appears), then SEND, and check the log below.")
+                tr("4. kembali ke sini, tekan CEK ADB SIDELOAD (setujui popup izin USB jika muncul), lalu PILIH FILE ZIP, lalu KIRIM, lihat log di bawah.",
+                    "4. come back here, press CHECK ADB SIDELOAD (approve the USB popup if it appears), then PICK ZIP FILE, then SEND, and check the log below.")
             )
         }
 
