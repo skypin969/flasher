@@ -11,8 +11,30 @@ android {
         applicationId = "com.skypin.flasher"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
+        versionCode = 3
         versionName = "9.6.9"
+    }
+
+    // Kunci rilis dibaca dari GitHub Secrets lewat environment variable.
+    // Kalau variabelnya tidak ada (misalnya build di komputer), build rilis tidak ditandatangani.
+    signingConfigs {
+        create("release") {
+            val ksPath = System.getenv("KEYSTORE_PATH")
+            if (ksPath != null) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (System.getenv("KEYSTORE_PATH") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     compileOptions {

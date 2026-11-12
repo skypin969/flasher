@@ -39,7 +39,6 @@
         </activity>
         <activity android:name=".FlashImgActivity" android:exported="false" />
         <activity android:name=".FlashRomActivity" android:exported="false" />
-        <activity android:name=".FlashSettingsActivity" android:exported="false" />
         <activity
             android:name=".AdbSideloadActivity"
             android:exported="false"
