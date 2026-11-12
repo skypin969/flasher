@@ -21,6 +21,18 @@ Aplikasi Android untuk flash HP Xiaomi lewat kabel OTG. Satu HP dipakai sebagai 
 - **ADB SIDELOAD:** kirim file ZIP ke HP target yang berada di mode sideload.
 - **SHARE FILE:** kirim file antar dua HP lewat Wi-Fi Direct dengan kode 4 angka.
 
+## Tampilan
+
+*Ilustrasi (rancangan), bukan tangkapan layar asli.*
+
+![Beranda](docs/01_home_screen.png)
+
+![FLASH FILE IMG](docs/02_flash_file_img.png)
+
+![FLASH FASTBOOT ROM](docs/03_flash_fastboot_rom.png)
+
+![SHARE FILE](docs/07_share_file_home.png)
+
 ## Perangkat yang sudah diuji
 
 - **Redmi Note 15 4G (spinel)** sebagai target:
@@ -81,6 +93,18 @@ Android app for flashing Xiaomi phones over an OTG cable. One phone runs Flashma
 - **FLASH FASTBOOT ROM:** flash a full fastboot ROM. Includes ROM file checks and Test Mode.
 - **ADB SIDELOAD:** send a ZIP file to a target phone in sideload mode.
 - **SHARE FILE:** send files between two phones over Wi-Fi Direct with a 4-digit code.
+
+## Screens
+
+*Illustrations (design mockups), not real screenshots.*
+
+![Home](docs/01_home_screen.png)
+
+![FLASH FILE IMG](docs/02_flash_file_img.png)
+
+![FLASH FASTBOOT ROM](docs/03_flash_fastboot_rom.png)
+
+![SHARE FILE](docs/07_share_file_home.png)
 
 ## Tested devices
 
