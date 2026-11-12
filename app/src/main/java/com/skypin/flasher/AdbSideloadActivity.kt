@@ -164,12 +164,12 @@ class AdbSideloadActivity : FlasherBase() {
     private fun guideLines(): List<String> =
         if (isMindTheGapps(zipName)) {
             listOf(
-                tr("1. di HP target (recovery), pilih Apply update → Apply from ADB",
-                    "1. on the target (recovery), choose Apply update → Apply from ADB"),
+                tr("1. di ${deviceLabel()} (recovery), pilih Apply update → Apply from ADB",
+                    "1. on ${deviceLabel()} (recovery), choose Apply update → Apply from ADB"),
                 tr("2. di sini, tekan CEK ADB SIDELOAD (setujui popup izin USB jika muncul), lalu KIRIM",
                     "2. here, press CHECK ADB SIDELOAD (approve the USB popup if it appears), then SEND"),
-                tr("3. saat di HP target muncul \"Install anyway?\", pilih Yes",
-                    "3. when the target shows \"Install anyway?\", choose Yes")
+                tr("3. saat di ${deviceLabel()} muncul \"Install anyway?\", pilih Yes",
+                    "3. when ${deviceLabel()} shows \"Install anyway?\", choose Yes")
             )
         } else {
             listOf(
@@ -250,6 +250,8 @@ class AdbSideloadActivity : FlasherBase() {
         if (!deviceFound) peerCodename = ""
         deviceLine.text = if (deviceFound) deviceLabel() else tr("belum ada perangkat ADB", "no ADB device yet")
         guideTitle.text = tr("langkah di ", "steps on ") + deviceLabel()
+        // Langkah MindTheGapps memakai codename, jadi ikut diperbarui setiap nama perangkat berubah
+        renderGuide()
     }
 
     private fun pickZip() {
@@ -330,7 +332,7 @@ class AdbSideloadActivity : FlasherBase() {
             } finally {
                 clearStatus()
             }
-            val note = noteFor(name)
+            val note = noteFor(name, deviceLabel())
             runOnUiThread {
                 statusNote.text = note
                 setSent(true)
@@ -342,7 +344,7 @@ class AdbSideloadActivity : FlasherBase() {
      * Teks kartu status sesudah zip terkirim, sesuai cara flashing masing-masing ROM.
      * Jenisnya dilihat dari nama file zip: mindthegapps, gapps (GApps bawaan), atau lainnya (GApps terpisah).
      */
-    private fun noteFor(file: String): String {
+    private fun noteFor(file: String, label: String): String {
         val f = file.lowercase(Locale.ROOT)
         return when {
             isMindTheGapps(file) -> tr(
@@ -354,8 +356,8 @@ class AdbSideloadActivity : FlasherBase() {
                 "If asked to install additional packages, choose No.\nThen choose Reboot system now."
             )
             else -> tr(
-                "Jika ditanya install paket tambahan, pilih No.\nUntuk Google apps: pilih Advanced → Reboot to recovery. Di HP target pilih Apply update → Apply from ADB, lalu di sini pilih PILIH ZIP BERIKUTNYA dan MindTheGapps.\nTanpa Google apps, pilih Reboot system now.",
-                "If asked to install additional packages, choose No.\nFor Google apps: choose Advanced → Reboot to recovery. On the target choose Apply update → Apply from ADB, then here pick NEXT ZIP and MindTheGapps.\nWithout Google apps, choose Reboot system now."
+                "Tanpa MindTheGapps, pilih: Reboot system now.\nJika ingin pasang MindTheGapps: pilih Advanced → Reboot to recovery. Di $label pilih Apply update → Apply from ADB, lalu di sini pilih PILIH ZIP BERIKUTNYA dan MindTheGapps.",
+                "Without MindTheGapps, choose: Reboot system now.\nTo install MindTheGapps: choose Advanced → Reboot to recovery. On $label choose Apply update → Apply from ADB, then here pick NEXT ZIP and MindTheGapps."
             )
         }
     }
