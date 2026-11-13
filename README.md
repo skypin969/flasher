@@ -19,7 +19,6 @@ Aplikasi Android untuk flash HP Xiaomi lewat kabel OTG. Satu HP dipakai sebagai 
 - **FLASH FILE IMG:** flash satu file image, misalnya boot, init_boot, vendor_boot, atau recovery, ke HP target yang berada di mode fastboot.
 - **FLASH FASTBOOT ROM:** flash ROM fastboot lengkap. Ada pemeriksaan file ROM dan Mode Uji.
 - **ADB SIDELOAD:** kirim file ZIP ke HP target yang berada di mode sideload.
-- **SHARE FILE:** kirim file antar dua HP lewat Wi-Fi Direct dengan kode 4 angka.
 
 ## Tampilan
 
@@ -33,10 +32,6 @@ Aplikasi Android untuk flash HP Xiaomi lewat kabel OTG. Satu HP dipakai sebagai 
 <p align="center">
   <img src="docs/03_flash_fastboot_rom.png" alt="FLASH FASTBOOT ROM" width="175">
   <img src="docs/06_adb_sideload.png" alt="ADB SIDELOAD" width="175">
-</p>
-
-<p align="center">
-  <img src="docs/07_share_file_home.png" alt="SHARE FILE" width="175">
 </p>
 
 ## Perangkat yang sudah diuji
@@ -53,8 +48,6 @@ Aplikasi Android untuk flash HP Xiaomi lewat kabel OTG. Satu HP dipakai sebagai 
     - Dari HyperOS 2.0.208.0.VOOMIXM ke HyperOS 3.0.305.0.WOOMIXM. Hasil OK, HP menyala normal.
     - Dari HyperOS 3.0.305.0.WOOMIXM ke HyperOS 2.0.208.0.VOOMIXM. Hasil OK, HP menyala normal.
   - ADB SIDELOAD: LineageOS 24.0 terpasang dengan "Install completed with status 0", dan HP menyala normal (12 November 2026). MindTheGapps juga terpasang (11 November) setelah memilih Yes pada "Install anyway?".
-
-- **SHARE FILE:** diuji antar dua HP tanpa masalah.
 
 ## Batasan
 
@@ -99,7 +92,6 @@ Android app for flashing Xiaomi phones over an OTG cable. One phone runs Flashma
 - **FLASH FILE IMG:** flash one image file, such as boot, init_boot, vendor_boot, or recovery, to a target phone in fastboot mode.
 - **FLASH FASTBOOT ROM:** flash a full fastboot ROM. Includes ROM file checks and Test Mode.
 - **ADB SIDELOAD:** send a ZIP file to a target phone in sideload mode.
-- **SHARE FILE:** send files between two phones over Wi-Fi Direct with a 4-digit code.
 
 ## Screens
 
@@ -113,10 +105,6 @@ Android app for flashing Xiaomi phones over an OTG cable. One phone runs Flashma
 <p align="center">
   <img src="docs/03_flash_fastboot_rom.png" alt="FLASH FASTBOOT ROM" width="175">
   <img src="docs/06_adb_sideload.png" alt="ADB SIDELOAD" width="175">
-</p>
-
-<p align="center">
-  <img src="docs/07_share_file_home.png" alt="SHARE FILE" width="175">
 </p>
 
 ## Tested devices
@@ -133,8 +121,6 @@ Android app for flashing Xiaomi phones over an OTG cable. One phone runs Flashma
     - From HyperOS 2.0.208.0.VOOMIXM to HyperOS 3.0.305.0.WOOMIXM. Result OK, the phone boots normally.
     - From HyperOS 3.0.305.0.WOOMIXM to HyperOS 2.0.208.0.VOOMIXM. Result OK, the phone boots normally.
   - ADB SIDELOAD: LineageOS 24.0 installed with "Install completed with status 0", and the phone boots normally (12 November 2026). MindTheGapps also installed (11 November) after choosing Yes at "Install anyway?".
-
-- **SHARE FILE:** tested between two phones without problems.
 
 ## Limitations
 
