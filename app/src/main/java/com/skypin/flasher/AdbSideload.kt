@@ -106,10 +106,10 @@ class AdbSideload(private val conn: UsbDeviceConnection, private val iface: UsbI
      * [onProgress] dipanggil dengan jumlah byte yang sudah terkirim. Jika [connect] belum dipanggil, fungsi ini memanggilnya sendiri.
      */
     fun sideload(size: Long, readAt: (Long, ByteArray, Int) -> Int, onProgress: (Long) -> Unit) {
-        if (size <= 0L || size > Int.MAX_VALUE) {
+        if (size <= 0L) {
             throw AdbException(
-                tr("Ukuran zip tidak didukung (harus 1 byte sampai 2 GB).",
-                    "Zip size is not supported (1 byte to 2 GB).")
+                tr("Ukuran zip tidak valid (file kosong).",
+                    "Zip size is not valid (empty file).")
             )
         }
         if (!connected) connect()
