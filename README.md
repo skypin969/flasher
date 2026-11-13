@@ -59,6 +59,7 @@ Aplikasi Android untuk flash HP Xiaomi lewat kabel OTG. Satu HP dipakai sebagai 
 ## Batasan
 
 - Baru diuji di dua HP. Hasilnya bisa berbeda di HP lain.
+- ADB SIDELOAD untuk zip di atas 2 GB belum diuji di HP.
 
 ## Cara pasang
 
@@ -138,6 +139,7 @@ Android app for flashing Xiaomi phones over an OTG cable. One phone runs Flashma
 ## Limitations
 
 - Tested on only two phones. Results may differ on other phones.
+- ADB SIDELOAD with zips larger than 2 GB has not been tested on a phone yet.
 
 ## Installation
 
