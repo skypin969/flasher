@@ -115,6 +115,16 @@ class Fastboot(private val conn: UsbDeviceConnection, private val iface: UsbInte
         }
     }
 
+    /** Reboot ke recovery. Sama seperti reboot: bootloader bisa memutus USB, jadi hanya FAIL yang dianggap error. */
+    fun rebootRecovery() {
+        write("reboot-recovery")
+        val n = conn.bulkTransfer(epIn, rbuf, rbuf.size, READ_TIMEOUT)
+        if (n > 0) {
+            val s = String(rbuf, 0, n, Charsets.US_ASCII)
+            if (s.startsWith("FAIL")) throw FastbootException(s.substring(4).ifBlank { "FAIL" })
+        }
+    }
+
     /** Kirim [size] byte dari [src] dengan perintah download. */
     fun download(size: Long, src: InputStream, onProgress: (Long) -> Unit = {}) {
         val r = cmd("download:%08x".format(size), DATA_TIMEOUT)

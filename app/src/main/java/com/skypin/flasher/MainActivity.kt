@@ -237,6 +237,12 @@ class MainActivity : FlasherBase() {
             tr("pilih folder, lalu jalankan",
                 "pick a folder, then run it")
         ) { openScreen(FlashRomActivity::class.java) })
+        root.addView(neonRow(
+            "PORT", p.soft, NeonTheme.MAGENTA,
+            "FLASH ROM PORT",
+            tr("folder port HyperOS 4, khusus Poco X7 5G",
+                "HyperOS 4 port folder, Poco X7 5G only")
+        ) { openScreen(FlashPortActivity::class.java) })
         // ADB sideload: tidak perlu CEK FASTBOOT, layar itu memeriksa perangkat ADB sendiri
         root.addView(neonRow(
             "SDL", p.soft, NeonTheme.MAGENTA,
